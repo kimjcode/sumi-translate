@@ -1,13 +1,22 @@
 //! 全域監聽層：雙擊 ⌘C 偵測、剪貼簿讀取、過濾。
 //! OS 層邏輯只放這裡（CLAUDE.md 邊界規則）。
+//!
+//! 鍵盤監聽用手寫 CGEventTap（core-graphics），只讀 keycode 與 modifier flags，
+//! 刻意不做 keycode→字元轉換：TIS/TSM API 在新版 macOS 只能於主執行緒呼叫，
+//! rdev 在監聽 callback 裡呼叫它導致整個 App 被 dispatch assertion 殺掉（見 docs/spike-01.md）。
 
 pub mod accessibility;
 pub mod double_press;
 
+use std::cell::RefCell;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use rdev::{Event, EventType, Key};
+use core_foundation::runloop::CFRunLoop;
+use core_graphics::event::{
+    CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
+    CGEventType, CallbackResult, EventField,
+};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -15,6 +24,9 @@ use double_press::{DoublePressDetector, DOUBLE_PRESS_WINDOW_MS};
 
 /// 雙擊觸發後發給前端的事件名。
 pub const CAPTURED_EVENT: &str = "sumi://captured";
+
+/// kVK_ANSI_C：實體 C 鍵位的 keycode（與輸入法/語言無關）。
+const KEYCODE_C: i64 = 8;
 
 #[derive(Clone, Serialize)]
 struct CapturedPayload {
@@ -40,33 +52,59 @@ pub fn spawn(app: AppHandle) {
 }
 
 fn run_listener(app: AppHandle) {
-    let mut detector =
-        DoublePressDetector::new(Duration::from_millis(DOUBLE_PRESS_WINDOW_MS));
-    let mut meta_down = false;
+    // callback 是 Fn（非 FnMut），且只會在本執行緒的 run loop 被呼叫 → RefCell 即可。
+    let detector = RefCell::new(DoublePressDetector::new(Duration::from_millis(
+        DOUBLE_PRESS_WINDOW_MS,
+    )));
 
-    let callback = move |event: Event| match event.event_type {
-        EventType::KeyPress(Key::MetaLeft) | EventType::KeyPress(Key::MetaRight) => {
-            meta_down = true;
-        }
-        EventType::KeyRelease(Key::MetaLeft) | EventType::KeyRelease(Key::MetaRight) => {
-            meta_down = false;
-        }
-        EventType::KeyPress(Key::KeyC) if meta_down => {
-            if detector.on_press(Instant::now()) {
-                log::info!("double Cmd+C detected");
-                on_trigger(&app);
+    let result = CGEventTap::with_enabled(
+        CGEventTapLocation::Session,
+        CGEventTapPlacement::HeadInsertEventTap,
+        // ListenOnly：被動監聽，絕不攔截/修改事件，不影響正常複製行為。
+        CGEventTapOptions::ListenOnly,
+        vec![CGEventType::KeyDown, CGEventType::KeyUp],
+        |_proxy, etype, event| {
+            match etype {
+                CGEventType::KeyDown
+                    if event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE)
+                        == KEYCODE_C =>
+                {
+                    let cmd_held = event
+                        .get_flags()
+                        .contains(CGEventFlags::CGEventFlagCommand);
+                    let autorepeat = event
+                        .get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT)
+                        != 0;
+                    if cmd_held
+                        && !autorepeat
+                        && detector.borrow_mut().on_press(Instant::now())
+                    {
+                        log::info!("double Cmd+C detected");
+                        on_trigger(&app);
+                    }
+                }
+                CGEventType::KeyUp
+                    if event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE)
+                        == KEYCODE_C =>
+                {
+                    detector.borrow_mut().on_release();
+                }
+                // 系統因 callback 過慢或使用者操作而停用 tap 時會收到這兩種事件；
+                // 先記 log，重新啟用列為 P0 待辦。
+                CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
+                    log::warn!("event tap disabled by system ({etype:?})");
+                }
+                _ => {}
             }
-        }
-        EventType::KeyRelease(Key::KeyC) => {
-            detector.on_release();
-        }
-        _ => {}
-    };
+            CallbackResult::Keep
+        },
+        // tap 掛上本執行緒 run loop 後在此阻塞處理事件。
+        || CFRunLoop::run_current(),
+    );
 
-    // rdev::listen 會阻塞並在本執行緒跑 CFRunLoop（macOS 為 CGEventTap）。
-    if let Err(e) = rdev::listen(callback) {
-        // 監聽失敗時優雅降級：App 照常活著，只是雙擊不會動。
-        log::error!("global key listener failed: {e:?}");
+    if result.is_err() {
+        // 建 tap 失敗（多半是權限問題）時優雅降級：App 照常活著，只是雙擊不會動。
+        log::error!("failed to create CGEventTap; double Cmd+C trigger disabled");
     }
 }
 
