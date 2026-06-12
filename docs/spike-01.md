@@ -82,15 +82,21 @@ Accessibility 檢查不加 crate：直接 `extern "C"` 連結 ApplicationService
 
 | # | 驗收項 | 狀態 |
 |---|---|---|
-| 1 | 雙擊 ⌘C → 視窗顯示複製文字 | CGEventTap 版完成，**待人工驗證** |
-| 2 | 單擊不觸發、不影響正常複製 | 邏輯有單測；tap 為 ListenOnly 不攔截事件；待人工驗證 |
-| 3 | 圖片/空剪貼簿優雅 no-op | 完成（`get_text()` Err / 空白皆不開窗），待人工驗證 |
+| 1 | 雙擊 ⌘C → 視窗顯示複製文字 | ✅ **人工驗證通過**（2026-06-12，中/英文皆原樣顯示） |
+| 2 | 單擊不觸發、不影響正常複製 | 邏輯有單測；tap 為 ListenOnly 不攔截事件；實測未回報異常 |
+| 3 | 圖片/空剪貼簿優雅 no-op | 完成（`get_text()` Err / 空白皆不開窗） |
 | 4 | 無權限時走引導流程 | 完成並經 log 驗證（onboarding + 一鍵開設定 + 自動輪詢） |
 | 5 | 時間窗為可調常數 | 完成（`DOUBLE_PRESS_WINDOW_MS = 300`，`monitor/double_press.rs`） |
 | 6 | 無 secret、log 不含剪貼簿內容 | 完成（log 只記字元數；`.gitignore` 含 `.env`/金鑰） |
 
+### 人工驗收時觀察到的行為（spike 符合預期，P0 過濾層處理）
+
+1. **Finder 複製檔案 → 顯示檔名**：Finder 對檔案按 ⌘C 時剪貼簿同時含 file URL 與純文字檔名，spike 只讀純文字所以顯示檔名。P0 過濾規則：剪貼簿含 file-url 型別（`public.file-url` / `NSFilenamesPboardType`）即視為「複製檔案」整個跳過。注意 `arboard` 讀不到型別資訊，屆時需經 NSPasteboard 檢查型別（可能需新增 objc2 系 crate，依紅線先核准）。
+2. **複製網址 → 原樣顯示**：spike 標準本來就是原封不動顯示。P0 在語言/路由層加規則：純 URL 不送翻譯（無意義、省 API 成本）。
+
 ## 給下一步的建議
 
-1. 重新人工驗收（特別確認：按鍵不再 crash、雙擊體感、授權後免重啟是否成立）。
+1. ~~重新人工驗收~~ → 已通過：按鍵不再 crash、雙擊觸發正常、中英文皆正確顯示。
 2. P0 開工前的小決策：改用 `AXIsProcessTrustedWithOptions(prompt=true)` 改善 onboarding（依賴已就緒，免新 crate）。
-3. P0 待辦：tap 被系統停用時自動重啟；非 QWERTY 實體配置的 keycode 對應。
+3. P0 過濾層待辦（語言/路由層，與機密過濾同處）：檔案複製跳過、純 URL 跳過、去重。
+4. P0 監聽層待辦：tap 被系統停用時自動重啟；非 QWERTY 實體配置的 keycode 對應。
