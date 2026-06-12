@@ -56,7 +56,7 @@ src/
 
 ### 3. 權限流程體感如何？有沒有 macOS 限制？
 
-- event tap **在偵測到權限就緒之後才建立**（後端每秒輪詢），理論上授權後免重啟；待實測確認。
+- event tap **在偵測到權限就緒之後才建立**（後端每秒輪詢），理論上授權後免重啟。實測：使用者印象是「授權後馬上能用」，且 rdev 版的 crash 發生在 tap callback 內——代表授權後 tap 確實收到事件，**免重啟路徑基本成立**；但因 crash 打斷觀察、後續測試時權限已給過，「剛授權 → 立即可用」沒有被乾淨重測。**P0 onboarding 採保守文案**：寫「授權後自動啟用」，補防呆「若 10 秒內沒反應，請重啟 Sumi」。
 - **權限歸屬是「負責的 process」**：dev 模式要授權給啟動 `npm run tauri dev` 的終端機/IDE，不是 `sumi` binary；打包後才是 `Sumi.app`。開發者最容易踩雷的點，已寫進 README。
 - 本 spike 用 `AXIsProcessTrusted()`（不帶 prompt）+ App 內按鈕開系統設定。App 可能不會自動出現在清單，需按「+」手動加入；P0 可改用 `AXIsProcessTrustedWithOptions(prompt=true)` 讓系統自動列入（需 CFDictionary，現在 `core-foundation` 已在依賴中，成本低）。
 - 重編譯後 TCC 可能認不得舊授權（以路徑/簽章識別），需移除重加。
