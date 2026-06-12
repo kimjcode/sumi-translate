@@ -10,13 +10,15 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
         "title": "Sumi",
-        "width": 520,
-        "height": 400,
-        "alwaysOnTop": true
+        "width": 480,
+        "height": 640,
+        "minWidth": 420,
+        "minHeight": 520
       }
     ],
     "security": {

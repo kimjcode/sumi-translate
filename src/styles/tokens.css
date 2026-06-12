@@ -1,0 +1,63 @@
+/* Sumi design tokens — 唯一來源：docs/ui-spec.md。顏色、字體、間距都從這裡取。 */
+
+:root {
+  /* 顏色（light：紙底墨字，朱紅只給簽名級元素） */
+  --paper: #faf8f3;
+  --surface: #ffffff;
+  --ink: #1c1a17;
+  --ink-2: #57534c;
+  --ink-3: #8a857c;
+  --hairline: rgba(28, 26, 23, 0.12);
+  --accent: #c8442b;
+  --accent-bg: #f6e7e2;
+  --danger: #a32d2d;
+
+  /* 字體 */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  --font-cjk: "PingFang TC", "Noto Sans TC", sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+  --font-display: "Newsreader", Georgia, "Songti TC", serif;
+
+  /* 圓角 */
+  --radius-card: 12px;
+  --radius-control: 8px;
+  --radius-seal: 2px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #161410;
+    --surface: #211e18;
+    --ink: #ece8df;
+    --ink-2: #a8a296;
+    --ink-3: #6f695e;
+    --hairline: rgba(236, 232, 223, 0.14);
+    --accent: #e0664b;
+    --accent-bg: #3a201a;
+    --danger: #e24b4a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-ui), var(--font-cjk);
+  color: var(--ink);
+  font-weight: 400;
+}
+
+/* 朱印方塊：全產品 signature 元素 */
+.seal {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: var(--radius-seal);
+}
+
+button {
+  font-family: inherit;
+}

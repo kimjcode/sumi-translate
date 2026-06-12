@@ -1,7 +1,7 @@
 # CLAUDE.md — Sumi
 
 macOS 常駐翻譯工具。複製文字 → 雙擊 `⌘C` 跳出翻譯浮窗（Glance），可就地展開成可編輯的雙語工作台（Workbench）。
-完整「做什麼/為什麼」見 `docs/PRD.md`，架構細節見 `docs/architecture.md`。本檔只放**決策與紅線**。
+完整「做什麼/為什麼」見 `docs/PRD.md`，已拍板決策見 `docs/decisions.md`。本檔只放**決策與紅線**。
 
 ## 專案識別（命名已鎖定）
 - 對外顯示名稱：**Sumi**（對外溝通可加描述詞「Sumi — macOS 翻譯工具」以利搜尋）

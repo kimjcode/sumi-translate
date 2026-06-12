@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-/// 雙擊判定時間窗（毫秒）。之後要做成使用者設定，先以常數集中管理。
+/// 預設雙擊判定時間窗（毫秒）。實際值由設定提供（可調），此為預設與測試用。
 pub const DOUBLE_PRESS_WINDOW_MS: u64 = 300;
 
 /// 判定「時間窗內的第二次按下」。
@@ -12,22 +12,20 @@ pub const DOUBLE_PRESS_WINDOW_MS: u64 = 300;
 /// - 第二次按下與第一次間隔在時間窗內 → 觸發，並重置狀態（第三次按下重新從頭計）。
 /// - 兩次按下之間必須有放開（key release），排除按住不放的 key-repeat 連發。
 pub struct DoublePressDetector {
-    window: Duration,
     last_press: Option<Instant>,
     released_since_last_press: bool,
 }
 
 impl DoublePressDetector {
-    pub fn new(window: Duration) -> Self {
+    pub fn new() -> Self {
         Self {
-            window,
             last_press: None,
             released_since_last_press: true,
         }
     }
 
-    /// 回報一次按下事件，回傳是否構成「雙擊」。
-    pub fn on_press(&mut self, now: Instant) -> bool {
+    /// 回報一次按下事件，回傳是否構成「雙擊」。`window` 每次傳入，支援設定即時生效。
+    pub fn on_press(&mut self, now: Instant, window: Duration) -> bool {
         if !self.released_since_last_press {
             // 按住不放的 OS key-repeat：不算新的一次按下。
             return false;
@@ -35,7 +33,7 @@ impl DoublePressDetector {
         self.released_since_last_press = false;
 
         match self.last_press {
-            Some(prev) if now.duration_since(prev) <= self.window => {
+            Some(prev) if now.duration_since(prev) <= window => {
                 self.last_press = None;
                 true
             }
@@ -56,25 +54,23 @@ impl DoublePressDetector {
 mod tests {
     use super::*;
 
-    fn detector() -> DoublePressDetector {
-        DoublePressDetector::new(Duration::from_millis(DOUBLE_PRESS_WINDOW_MS))
-    }
+    const WINDOW: Duration = Duration::from_millis(DOUBLE_PRESS_WINDOW_MS);
 
     fn press_release(d: &mut DoublePressDetector, t: Instant) -> bool {
-        let fired = d.on_press(t);
+        let fired = d.on_press(t, WINDOW);
         d.on_release();
         fired
     }
 
     #[test]
     fn single_press_does_not_fire() {
-        let mut d = detector();
+        let mut d = DoublePressDetector::new();
         assert!(!press_release(&mut d, Instant::now()));
     }
 
     #[test]
     fn two_presses_within_window_fire() {
-        let mut d = detector();
+        let mut d = DoublePressDetector::new();
         let t0 = Instant::now();
         assert!(!press_release(&mut d, t0));
         assert!(press_release(&mut d, t0 + Duration::from_millis(150)));
@@ -82,7 +78,7 @@ mod tests {
 
     #[test]
     fn two_presses_outside_window_do_not_fire() {
-        let mut d = detector();
+        let mut d = DoublePressDetector::new();
         let t0 = Instant::now();
         assert!(!press_release(&mut d, t0));
         assert!(!press_release(&mut d, t0 + Duration::from_millis(301)));
@@ -90,17 +86,17 @@ mod tests {
 
     #[test]
     fn key_repeat_without_release_does_not_fire() {
-        let mut d = detector();
+        let mut d = DoublePressDetector::new();
         let t0 = Instant::now();
-        assert!(!d.on_press(t0));
+        assert!(!d.on_press(t0, WINDOW));
         // 按住不放，OS 連發 press、沒有 release。
-        assert!(!d.on_press(t0 + Duration::from_millis(100)));
-        assert!(!d.on_press(t0 + Duration::from_millis(200)));
+        assert!(!d.on_press(t0 + Duration::from_millis(100), WINDOW));
+        assert!(!d.on_press(t0 + Duration::from_millis(200), WINDOW));
     }
 
     #[test]
     fn fires_again_after_reset() {
-        let mut d = detector();
+        let mut d = DoublePressDetector::new();
         let t0 = Instant::now();
         assert!(!press_release(&mut d, t0));
         assert!(press_release(&mut d, t0 + Duration::from_millis(100)));
@@ -112,12 +108,22 @@ mod tests {
 
     #[test]
     fn late_second_press_starts_new_window() {
-        let mut d = detector();
+        let mut d = DoublePressDetector::new();
         let t0 = Instant::now();
         assert!(!press_release(&mut d, t0));
         // 超窗的第二下不觸發，但成為新窗的第一下。
         let t1 = t0 + Duration::from_millis(400);
         assert!(!press_release(&mut d, t1));
         assert!(press_release(&mut d, t1 + Duration::from_millis(100)));
+    }
+
+    #[test]
+    fn respects_custom_window() {
+        let mut d = DoublePressDetector::new();
+        let wide = Duration::from_millis(600);
+        let t0 = Instant::now();
+        assert!(!d.on_press(t0, wide));
+        d.on_release();
+        assert!(d.on_press(t0 + Duration::from_millis(450), wide));
     }
 }
