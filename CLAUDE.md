@@ -78,10 +78,10 @@ Windows/Linux · OCR/截圖翻譯 · plugin system · 多 agent · 登入/帳號
 - 每完成一階段，更新 `docs/` 與本檔決策。PRD/本檔沒寫清楚的架構決策，**先問我，不要自己選**。
 
 ## 常用指令
-> 專案 scaffold 後補上。
 ```
-# dev:   TBD
-# build: TBD
-# lint:  TBD
-# test:  TBD
+# dev:   npm run tauri dev          # 啟動 App（需先 npm install；權限注意事項見 README）
+# build: npm run tauri build        # 打包 .app
+# lint:  TBD（尚未設置）
+# test:  (cd src-tauri && cargo test --lib)   # Rust 純邏輯單元測試
 ```
+> 注意：`Cargo.lock` 將 `time` 釘在 0.3.47（0.3.48 與 rustc 1.96 有 coherence 衝突，見 docs/spike-01.md）。升級依賴時勿拉回 0.3.48。
