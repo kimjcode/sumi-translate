@@ -43,6 +43,14 @@
 - 關閉條件：`Esc`／點浮窗外／閒置（預設 6s，可調）。
 - 透明圓角需要 Tauri `macos-private-api` feature（官方 feature flag，非第三方）。
 
+### D4 補充 — App 形態與「搶焦點」的釐清（2026-06-13）
+
+- **Glance 唯讀是設計，不是 bug**：浮窗不能在裡面打字；「在浮窗內編輯原文＋即時重翻」是 Workbench（P1）的事。曾誤把「無法在浮窗內打字」當成搶焦點 bug。
+- 真正要驗的是「浮窗出現時，底下原本的 App 能不能繼續打字」——non-activating panel 已滿足，**毋需把 App 設成 accessory**。
+- 一度為了解這個（不存在的）問題把 App 改成 accessory（背景代理），結果：① 沒 Dock 圖示 ② 設定視窗關掉後要重啟才能再開（還沒做選單列圖示）。**P0 決定維持一般 App**（有 Dock 圖示、設定隨時可開）。
+- accessory／選單列常駐形態延後到有選單列圖示時一起做（呼應 PRD「常駐工具」終態）。
+- 教訓：表象（閃退、狂跳密碼）當時其實是 ResizeObserver 凍結視窗高度 + Keychain 每次讀都跳密碼兩個獨立 bug，不是 accessory 造成；別被表象帶著改架構。
+
 ## 歷史決策（spike-01）
 
 - 全域監聽：手寫 CGEventTap（core-graphics），**不用 rdev**（macOS 26 上一按鍵就 crash，見 docs/spike-01.md）。
