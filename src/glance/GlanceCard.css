@@ -1,23 +1,28 @@
 /* Glance 浮窗 — 尺寸/顏色/間距全部取自 tokens（ui-spec §5） */
 
+/* 穩定外層：持有 ResizeObserver 的 ref，不隨狀態重新掛載 */
 .glance-card {
   width: 340px;
   background: var(--surface);
   border: 0.5px solid var(--hairline);
   border-radius: var(--radius-card);
   padding: 12px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
   overflow: hidden;
 }
 
+/* 內層內容：隨每次翻譯重新掛載以重播淡入動畫 */
+.glance-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 /* 進出 120ms 淡入淡出（ui-spec §7），無位移彈跳 */
-.glance-card.showing {
+.glance-content.showing {
   animation: glance-fade-in 120ms ease-out;
 }
 
-.glance-card.hiding {
+.glance-content.hiding {
   opacity: 0;
   transition: opacity 120ms ease-in;
 }
@@ -29,10 +34,6 @@
   to {
     opacity: 1;
   }
-}
-
-.glance-empty {
-  min-height: 48px;
 }
 
 .glance-header {
@@ -151,10 +152,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .glance-card.showing {
+  .glance-content.showing {
     animation: none;
   }
-  .glance-card.hiding {
+  .glance-content.hiding {
     transition: none;
   }
   .brush-cursor {

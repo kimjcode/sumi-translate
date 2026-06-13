@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::monitor::{filter, pasteboard};
 use crate::providers::{self, Provider, Translation};
-use crate::settings::{self, SettingsState};
+use crate::settings::SettingsState;
 use crate::windows::glance;
 
 pub const STATE_EVENT: &str = "glance://state";
@@ -144,6 +144,17 @@ fn translate_and_show(app: &AppHandle, text: String, truncated: bool) {
         return;
     }
 
+    // 取 API key（走記憶體快取，第一次才讀 Keychain）。沒 key 直接顯示提示，不進 loading。
+    let Some(api_key) = app.state::<SettingsState>().api_key(provider) else {
+        show(
+            app,
+            GlanceMsg::Error {
+                message: providers::ProviderError::MissingKey.user_message(provider),
+            },
+        );
+        return;
+    };
+
     show(
         app,
         GlanceMsg::Loading {
@@ -159,7 +170,7 @@ fn translate_and_show(app: &AppHandle, text: String, truncated: bool) {
     let app2 = app.clone();
 
     tauri::async_runtime::spawn(async move {
-        let outcome = run_translation(provider, &client, &text, &target_lang).await;
+        let outcome = run_translation(provider, &client, &api_key, &text, &target_lang).await;
         let state = app2.state::<PipelineState>();
         if state.request_seq.load(Ordering::SeqCst) != request_id {
             return; // 已有更新的觸發，丟棄這筆結果
@@ -199,14 +210,19 @@ fn translate_and_show(app: &AppHandle, text: String, truncated: bool) {
 async fn run_translation(
     provider: Provider,
     client: &reqwest::Client,
+    api_key: &str,
     text: &str,
     target_lang: &str,
 ) -> Result<Translation, String> {
-    let Some(api_key) = settings::api_key(provider) else {
-        return Err(providers::ProviderError::MissingKey.user_message(provider));
-    };
+    // 診斷用：記 provider / 目標語言 / 字元數，不記內容（紅線）。
+    log::info!(
+        "translating via {} → target={:?} ({} chars)",
+        provider.display_name(),
+        target_lang,
+        text.chars().count()
+    );
     let started = Instant::now();
-    match providers::translate(provider, client, &api_key, text, target_lang).await {
+    match providers::translate(provider, client, api_key, text, target_lang).await {
         Ok(translation) => {
             // 紅線：只 log 統計值，不 log 內容。
             log::info!(
@@ -224,9 +240,12 @@ async fn run_translation(
                 started.elapsed().as_millis(),
                 match &e {
                     providers::ProviderError::MissingKey => "missing key".into(),
-                    providers::ProviderError::Network(_) => "network error".into(),
-                    providers::ProviderError::Api { status, .. } => format!("HTTP {status}"),
-                    providers::ProviderError::Parse(_) => "parse error".into(),
+                    providers::ProviderError::Network(msg) => format!("network error: {msg}"),
+                    // API 錯誤訊息來自服務端回應（如「Invalid Value」），不含剪貼簿原文。
+                    providers::ProviderError::Api { status, message } => {
+                        format!("HTTP {status}: {message}")
+                    }
+                    providers::ProviderError::Parse(msg) => format!("parse error: {msg}"),
                 }
             );
             Err(e.user_message(provider))
