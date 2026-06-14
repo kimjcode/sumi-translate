@@ -35,3 +35,10 @@
 - **修法**：(a) 修 ResizeObserver 凍高度；(b) dev 限定問題、簽章後消失，README 已註記。
 - **狀態**：Fixed
 - **教訓**：先隔離變因再動架構——被表象帶去改 accessory，繞了一圈才找到真兇。
+## P1 / Workbench
+
+### 5. 展開只有第一次成功，第二次失效
+- **症狀**：Glance 按「展開」第一次正常開 Workbench，關掉後再展開就沒反應。
+- **根因**：用原生紅色關閉鈕關 Workbench 時，Tauri 預設**銷毀**視窗；第二次 `show()` 找不到視窗。
+- **修法**：攔截 `CloseRequested` → `prevent_close()` + 隱藏，視窗保留供下次再 show。
+- **狀態**：Fixed
