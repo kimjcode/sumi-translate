@@ -172,7 +172,7 @@ pub fn contains_point(app: &AppHandle, x_pts: f64, y_pts: f64) -> bool {
         && y <= pos.y as f64 + size.height as f64
 }
 
-/// 把浮窗放在游標右下方，並夾在游標所在螢幕的工作區內；下方放不下就改放游標上方。
+/// 把浮窗放在游標右下方，並夾在游標所在螢幕的可視工作區內；下方放不下就改放游標上方。
 fn position_near_cursor(app: &AppHandle, window: &WebviewWindow) {
     let Ok(cursor) = app.cursor_position() else {
         return;
@@ -187,18 +187,45 @@ fn position_near_cursor(app: &AppHandle, window: &WebviewWindow) {
     let mut x = cursor.x + offset_x;
     let mut y = cursor.y + offset_y;
 
-    if let Ok(Some(monitor)) = app.monitor_from_point(cursor.x, cursor.y) {
-        let area_pos = monitor.position();
-        let area_size = monitor.size();
-        let max_x = area_pos.x as f64 + area_size.width as f64 - size.width as f64 - 8.0;
-        let max_y = area_pos.y as f64 + area_size.height as f64 - size.height as f64 - 8.0;
+    // 注意：不能用 `monitor_from_point(cursor)`——它底層用 CGDisplayBounds（logical 點），
+    // 但 cursor_position 是 physical 像素，Retina 上會對不上而回 None。改自己用
+    // available_monitors（position/size 皆 physical）比對，座標系才一致。
+    if let Some(monitor) = monitor_containing(app, cursor.x, cursor.y) {
+        let area = monitor.work_area(); // 可視工作區：已扣掉 Dock 與選單列
+        let area_x = area.position.x as f64;
+        let area_y = area.position.y as f64;
+        let area_w = area.size.width as f64;
+        let area_h = area.size.height as f64;
+        let min_x = area_x + 8.0;
+        let min_y = area_y + 8.0;
+        let max_x = (area_x + area_w - size.width as f64 - 8.0).max(min_x);
+        let max_y = (area_y + area_h - size.height as f64 - 8.0).max(min_y);
         if y > max_y {
-            // 下方放不下 → 放游標上方。
+            // 下方（工作區內）放不下 → 改放游標上方，往上長。
             y = cursor.y - size.height as f64 - offset_y;
         }
-        x = x.clamp(area_pos.x as f64 + 8.0, max_x.max(area_pos.x as f64 + 8.0));
-        y = y.max(area_pos.y as f64 + 8.0);
+        x = x.clamp(min_x, max_x);
+        y = y.clamp(min_y, max_y);
+        log::debug!(
+            "glance pos: cursor=({:.0},{:.0}) size=({},{}) work_area=({},{},{},{}) → ({:.0},{:.0})",
+            cursor.x, cursor.y, size.width, size.height,
+            area_x, area_y, area_w, area_h, x, y
+        );
     }
 
     let _ = window.set_position(PhysicalPosition::new(x as i32, y as i32));
+}
+
+/// 找出 physical 座標 (x,y) 落在哪個螢幕（physical 邊界比對）；找不到回主螢幕。
+fn monitor_containing(app: &AppHandle, x: f64, y: f64) -> Option<tauri::Monitor> {
+    let monitors = app.available_monitors().ok()?;
+    for m in &monitors {
+        let p = m.position();
+        let s = m.size();
+        let (mx, my) = (p.x as f64, p.y as f64);
+        if x >= mx && x < mx + s.width as f64 && y >= my && y < my + s.height as f64 {
+            return Some(m.clone());
+        }
+    }
+    app.primary_monitor().ok().flatten()
 }

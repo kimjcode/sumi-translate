@@ -60,3 +60,9 @@
 - **根因**：textarea 點空白／行尾時游標吸附到文字結尾；句尾是字母就被 wordAtCaret 抓成最後一個字（有標點時結尾非字母才剛好倖免）。
 - **修法**：純點擊時要求游標右側是字母（真的點在字上）；點空白/行尾/空格不查。
 - **狀態**：Fixed
+
+### 9. Glance 浮窗被 Dock／螢幕邊緣切掉
+- **症狀**：游標靠近螢幕下緣（或邊緣）時，浮窗被 Dock 蓋住、顯示不完整；短譯文也一樣。
+- **根因**：定位用 `monitor_from_point(cursor)` 取螢幕，但它底層用 CGDisplayBounds（logical 點），而 `cursor_position` 給的是 physical 像素；Retina（2x）上座標對不上 → 回 `None` → 整段夾邊界邏輯被跳過 → 浮窗毫無邊界保護。另外原本用 `monitor.size()`（全螢幕）而非可視工作區。
+- **修法**：改自己用 `available_monitors()`（position/size 皆 physical）比對找游標所在螢幕；用其 `work_area()`（已扣 Dock/選單列）夾邊界，近底時往游標上方開。
+- **狀態**：Fixed
