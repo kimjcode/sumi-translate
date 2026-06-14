@@ -37,6 +37,7 @@ export interface DictionaryEntry {
   meanings: DictMeaning[];
 }
 
+export const WORKBENCH_INPUT_EVENT = "workbench://input";
 export const LLM_TOKEN_EVENT = "workbench://llm-token";
 export const LLM_DONE_EVENT = "workbench://llm-done";
 export const LLM_ERROR_EVENT = "workbench://llm-error";

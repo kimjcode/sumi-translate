@@ -42,3 +42,15 @@
 - **根因**：用原生紅色關閉鈕關 Workbench 時，Tauri 預設**銷毀**視窗；第二次 `show()` 找不到視窗。
 - **修法**：攔截 `CloseRequested` → `prevent_close()` + 隱藏，視窗保留供下次再 show。
 - **狀態**：Fixed
+
+### 6. 展開不帶入當下內容、殘留上一次單字卡
+- **症狀**：開 Workbench 第一次空白、第二次顯示上一次內容；上次點的單字卡會殘留。
+- **根因**：Workbench 視窗啟動時掛載一次、之後只 show/hide，React 不重新掛載，`getWorkbenchInput()` 只在啟動跑一次。
+- **修法**：`open_workbench` 每次發 `workbench://input` 事件推當下內容；前端收到就更新內容並清掉殘留單字卡。
+- **狀態**：Fixed
+
+### 7. 字典卡 Gemini 回 HTTP 404
+- **症狀**：文法/語境段顯示「Gemini 回了錯誤（HTTP 404）」。
+- **根因**：model `gemini-2.0-flash` 在現行 API/該 key 上找不到（2.0 應已退役）。
+- **修法**：改 `gemini-2.5-flash`；並把 API 錯誤訊息浮上 UI（404 body 會列可用 model），便於再調整。
+- **狀態**：Fixed（待實機確認 2.5-flash 可用）

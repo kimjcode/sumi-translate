@@ -13,6 +13,7 @@ use crate::providers::{self, dictionary::DictionaryEntry};
 use crate::settings::SettingsState;
 use crate::windows::{glance, workbench as wb_window};
 
+pub const INPUT_EVENT: &str = "workbench://input";
 pub const LLM_TOKEN_EVENT: &str = "workbench://llm-token";
 pub const LLM_DONE_EVENT: &str = "workbench://llm-done";
 pub const LLM_ERROR_EVENT: &str = "workbench://llm-error";
@@ -81,13 +82,17 @@ pub fn open_workbench(
     translated: String,
     target_lang: String,
 ) {
-    *state.input.lock().expect("workbench input poisoned") = Some(WorkbenchInput {
+    let input = WorkbenchInput {
         original,
         translated,
         target_lang,
-    });
+    };
+    *state.input.lock().expect("workbench input poisoned") = Some(input.clone());
     glance::hide(&app);
     wb_window::show(&app);
+    // 視窗在啟動時就掛載、之後只 show/hide（React 不重新掛載），所以每次展開都推事件，
+    // 讓前端更新內容並清掉殘留的單字卡。
+    let _ = app.emit_to(wb_window::WORKBENCH_LABEL, INPUT_EVENT, input);
 }
 
 /// Workbench 前端掛載時讀取帶入的原文 / 譯文。
@@ -214,6 +219,8 @@ pub fn gemini_explain(
                 let _ = app2.emit_to(wb_window::WORKBENCH_LABEL, LLM_DONE_EVENT, LlmEvent::Done { seq });
             }
             Err(e) => {
+                // 診斷：API 錯誤訊息（如 404 列出可用 model），非使用者內容。
+                log::warn!("gemini stream failed: {e:?}");
                 let _ = app2.emit_to(
                     wb_window::WORKBENCH_LABEL,
                     LLM_ERROR_EVENT,

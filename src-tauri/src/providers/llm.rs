@@ -6,7 +6,7 @@ use serde::Deserialize;
 use super::ProviderError;
 
 /// 預設模型。集中為常數，日後換版只改這裡。
-pub const GEMINI_MODEL: &str = "gemini-2.0-flash";
+pub const GEMINI_MODEL: &str = "gemini-2.5-flash";
 
 fn endpoint(model: &str) -> String {
     format!(

@@ -10,6 +10,8 @@ import {
   LLM_TOKEN_EVENT,
   LlmEvent,
   WbTranslation,
+  WORKBENCH_INPUT_EVENT,
+  WorkbenchInput,
 } from "../services/api";
 import DictionaryCard, { DictCardState } from "./DictionaryCard";
 import "./Workbench.css";
@@ -31,16 +33,26 @@ export default function Workbench() {
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const llmSeq = useRef(0);
 
-  // 帶入 Glance 的原文 + 譯文。
+  const applyInput = (input: WorkbenchInput) => {
+    setOriginal(input.original);
+    setTranslated(input.translated);
+    setTargetLang(input.target_lang);
+    setStatus("");
+    setCard(null); // 清掉上一次殘留的單字卡
+    llmSeq.current = 0; // 作廢上一次的串流
+  };
+
+  // 帶入 Glance 的原文 + 譯文：初次掛載讀一次 + 每次展開收事件更新。
   useEffect(() => {
     api.getWorkbenchInput().then((input) => {
-      if (input) {
-        setOriginal(input.original);
-        setTranslated(input.translated);
-        setTargetLang(input.target_lang);
-      }
+      if (input) applyInput(input);
     });
     api.getSettings().then((s) => setProvider(s.provider));
+    const unInput = listen<WorkbenchInput>(WORKBENCH_INPUT_EVENT, (e) => applyInput(e.payload));
+    return () => {
+      unInput.then((f) => f());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 自適應斷點：寬度 < 520 → 上下堆疊。

@@ -60,8 +60,13 @@ impl ProviderError {
             ProviderError::Api { status: 429, .. } => {
                 format!("{name} 額度暫時用完 — 稍等再試")
             }
-            ProviderError::Api { status, .. } => {
-                format!("{name} 回了錯誤（HTTP {status}）— 稍後再試")
+            ProviderError::Api { status, message } => {
+                if message.is_empty() {
+                    format!("{name} 回了錯誤（HTTP {status}）— 稍後再試")
+                } else {
+                    // 帶上服務端訊息（如 404 會列出可用 model），方便診斷。
+                    format!("{name} 回了錯誤（HTTP {status}）：{message}")
+                }
             }
             ProviderError::Parse(_) => {
                 format!("看不懂 {name} 的回應 — 稍後再試，持續發生請回報")
