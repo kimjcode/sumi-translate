@@ -12,6 +12,7 @@ use tauri::{AppHandle, Manager};
 use crate::providers::Provider;
 
 const KEYCHAIN_SERVICE: &str = "com.kimj.sumi";
+const LLM_ACCOUNT: &str = "gemini_api_key";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -25,6 +26,8 @@ pub struct Settings {
     // （未簽章的 dev binary 每次讀 Keychain 都會跳密碼框）。實際 key 仍只在 Keychain。
     pub google_key_set: bool,
     pub deepl_key_set: bool,
+    /// Gemini（LLM，Workbench 文法/語境用）的 key 是否已設定。
+    pub gemini_key_set: bool,
 }
 
 impl Default for Settings {
@@ -37,6 +40,7 @@ impl Default for Settings {
             always_on_monitor: false,
             google_key_set: false,
             deepl_key_set: false,
+            gemini_key_set: false,
         }
     }
 }
@@ -64,6 +68,8 @@ pub struct SettingsState {
     pub current: Mutex<Settings>,
     pub double_press_ms: AtomicU64,
     key_cache: Mutex<HashMap<Provider, String>>,
+    /// Gemini key 另存一格（不屬於 MT 的 Provider enum）。
+    llm_key_cache: Mutex<Option<String>>,
 }
 
 impl SettingsState {
@@ -72,6 +78,7 @@ impl SettingsState {
             double_press_ms: AtomicU64::new(settings.double_press_ms),
             current: Mutex::new(settings),
             key_cache: Mutex::new(HashMap::new()),
+            llm_key_cache: Mutex::new(None),
         }
     }
 
@@ -109,6 +116,19 @@ impl SettingsState {
             .lock()
             .expect("key cache poisoned")
             .remove(&provider);
+    }
+
+    /// 取 Gemini key：先看快取，沒有才讀 Keychain 並快取。key 絕不進 log。
+    pub fn llm_api_key(&self) -> Option<String> {
+        if let Some(cached) = self.llm_key_cache.lock().expect("llm key cache poisoned").as_ref() {
+            return Some(cached.clone());
+        }
+        let key = keyring::Entry::new(KEYCHAIN_SERVICE, LLM_ACCOUNT)
+            .ok()?
+            .get_password()
+            .ok()?;
+        *self.llm_key_cache.lock().expect("llm key cache poisoned") = Some(key.clone());
+        Some(key)
     }
 }
 
@@ -239,4 +259,56 @@ fn update_key_flag(
         guard.clone()
     };
     save(app, &snapshot);
+}
+
+// ── Gemini（LLM）key ───────────────────────────────────────────────────────
+
+fn update_gemini_flag(app: &AppHandle, state: &SettingsState, value: bool) {
+    let snapshot = {
+        let mut guard = state.current.lock().expect("settings mutex poisoned");
+        guard.gemini_key_set = value;
+        guard.clone()
+    };
+    save(app, &snapshot);
+}
+
+#[tauri::command]
+pub fn set_llm_key(
+    app: AppHandle,
+    state: tauri::State<'_, SettingsState>,
+    key: String,
+) -> Result<(), String> {
+    let key = key.trim().to_string();
+    if key.is_empty() {
+        return Err("API key 不可為空".into());
+    }
+    keyring::Entry::new(KEYCHAIN_SERVICE, LLM_ACCOUNT)
+        .map_err(|e| e.to_string())?
+        .set_password(&key)
+        .map_err(|e| format!("寫入 Keychain 失敗：{e}"))?;
+    *state.llm_key_cache.lock().expect("llm key cache poisoned") = Some(key);
+    update_gemini_flag(&app, &state, true);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn llm_key_set(state: tauri::State<'_, SettingsState>) -> bool {
+    state.snapshot().gemini_key_set
+}
+
+#[tauri::command]
+pub fn clear_llm_key(
+    app: AppHandle,
+    state: tauri::State<'_, SettingsState>,
+) -> Result<(), String> {
+    *state.llm_key_cache.lock().expect("llm key cache poisoned") = None;
+    update_gemini_flag(&app, &state, false);
+    match keyring::Entry::new(KEYCHAIN_SERVICE, LLM_ACCOUNT)
+        .map_err(|e| e.to_string())?
+        .delete_credential()
+    {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("清除 Keychain 失敗：{e}")),
+    }
 }

@@ -1,0 +1,37 @@
+# Issues — 缺陷紀錄
+
+修 bug 時維護這份清單。與 `decisions.md` 分工：
+- **issues.md** = 壞了什麼、怎麼修的（缺陷）。
+- **decisions.md** = 為什麼這樣設計（決策）。
+
+**格式：每筆四欄，精簡可掃，不要寫成冗長 debug 日記。**
+**流程：先寫症狀與懷疑 → 隔離變因確認根因 → 再動手。**（別被表象帶著去改架構。）
+
+---
+
+## P0 / Glance
+
+### 1. 浮窗只顯示英文、沒有譯文
+- **症狀**：浮窗正常出現，但只顯示原文、翻譯一直沒回來。
+- **根因**：reqwest 0.13 的 `system-proxy` feature 在 macOS 上讓請求靜默卡死。
+- **修法**：移除 system-proxy，改直連。
+- **狀態**：Fixed
+
+### 2. keyring 不可用
+- **症狀**：讀取 Keychain 的 key 時 crate 行為異常。
+- **根因**：keyring v4 已變成純範例 crate。
+- **修法**：改用 keyring v3。
+- **狀態**：Fixed
+
+### 3. 過濾層誤殺正常內容
+- **症狀**：檔案路徑 `/Users/.../x.pdf`、連字號詞 `Pre-trained` 被當成機密內容跳過。
+- **根因**：通用密碼規則太寬鬆。
+- **修法**：URL/路徑先判；密碼樣式須同時含數字＋符號＋字母。
+- **狀態**：Fixed
+
+### 4. 閃退 ＋ 狂跳密碼（兩個獨立 bug，非單一表象）
+- **症狀**：浮窗閃退、且不斷跳 Keychain 密碼，一度懷疑是「搶焦點 / accessory」。
+- **根因**：其實是兩個無關的 bug——(a) ResizeObserver 凍結視窗高度；(b) Keychain 對未簽章的 dev binary 每次讀都跳密碼。與 focus/accessory 無關。
+- **修法**：(a) 修 ResizeObserver 凍高度；(b) dev 限定問題、簽章後消失，README 已註記。
+- **狀態**：Fixed
+- **教訓**：先隔離變因再動架構——被表象帶去改 accessory，繞了一圈才找到真兇。

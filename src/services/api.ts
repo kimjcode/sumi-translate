@@ -9,7 +9,42 @@ export interface Settings {
   double_press_ms: number;
   idle_close_ms: number;
   always_on_monitor: boolean;
+  google_key_set: boolean;
+  deepl_key_set: boolean;
+  gemini_key_set: boolean;
 }
+
+export interface WorkbenchInput {
+  original: string;
+  translated: string;
+  target_lang: string;
+}
+
+export type WbTranslation =
+  | { kind: "ok"; translated: string; detected_source: string | null; truncated: boolean }
+  | { kind: "secret" }
+  | { kind: "empty" }
+  | { kind: "error"; message: string };
+
+export interface DictMeaning {
+  part_of_speech: string;
+  definitions: string[];
+}
+
+export interface DictionaryEntry {
+  word: string;
+  phonetic: string | null;
+  meanings: DictMeaning[];
+}
+
+export const LLM_TOKEN_EVENT = "workbench://llm-token";
+export const LLM_DONE_EVENT = "workbench://llm-done";
+export const LLM_ERROR_EVENT = "workbench://llm-error";
+
+export type LlmEvent =
+  | { kind: "token"; seq: number; delta: string }
+  | { kind: "done"; seq: number }
+  | { kind: "error"; seq: number; message: string };
 
 export type GlanceState =
   | { kind: "loading"; original: string; truncated: boolean; target_lang: string; provider: string }
@@ -38,6 +73,19 @@ export const api = {
   setApiKey: (provider: Provider, key: string) => invoke<void>("set_api_key", { provider, key }),
   apiKeySet: (provider: Provider) => invoke<boolean>("api_key_set", { provider }),
   clearApiKey: (provider: Provider) => invoke<void>("clear_api_key", { provider }),
+  setLlmKey: (key: string) => invoke<void>("set_llm_key", { key }),
+  llmKeySet: () => invoke<boolean>("llm_key_set"),
+  clearLlmKey: () => invoke<void>("clear_llm_key"),
+  hideGlance: () => invoke<void>("hide_glance"),
+  // Workbench
+  openWorkbench: (original: string, translated: string, targetLang: string) =>
+    invoke<void>("open_workbench", { original, translated, targetLang }),
+  getWorkbenchInput: () => invoke<WorkbenchInput | null>("get_workbench_input"),
+  closeWorkbench: () => invoke<void>("close_workbench"),
+  workbenchTranslate: (text: string) => invoke<WbTranslation>("workbench_translate", { text }),
+  dictionaryLookup: (word: string) => invoke<DictionaryEntry | null>("dictionary_lookup", { word }),
+  geminiExplain: (word: string, sentence: string, targetLang: string) =>
+    invoke<number>("gemini_explain", { word, sentence, targetLang }),
 };
 
 export const LANG_OPTIONS: { value: string; label: string }[] = [

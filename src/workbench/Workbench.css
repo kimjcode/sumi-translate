@@ -1,0 +1,144 @@
+/* Workbench — token 取自 ui-spec §6 */
+
+html.workbench-window,
+html.workbench-window body {
+  background: var(--paper);
+  height: 100%;
+}
+
+.wb-root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* Toolbar 44px：左 = 朱印 + wordmark；右 = 目標語言 / provider / 複製 */
+.wb-toolbar {
+  height: 44px;
+  flex: 0 0 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 0.5px solid var(--hairline);
+}
+
+.wb-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wb-wordmark {
+  font-family: var(--font-display);
+  font-size: 16px;
+}
+
+.wb-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wb-tools select {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--radius-control);
+  padding: 3px 6px;
+}
+
+.wb-provider {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.wb-copy {
+  font-size: 12px;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--radius-control);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.wb-copy:hover {
+  background: var(--paper);
+}
+
+/* 主區自適應：≥520 雙欄、<520 堆疊 */
+.wb-main {
+  flex: 1 1 auto;
+  display: grid;
+  gap: 0;
+  min-height: 0;
+}
+
+.wb-main.columns {
+  grid-template-columns: 1fr 1fr;
+}
+
+.wb-main.columns .wb-pane:first-child {
+  border-right: 0.5px solid var(--hairline);
+}
+
+.wb-main.stacked {
+  grid-template-rows: 1fr 1fr;
+}
+
+.wb-main.stacked .wb-pane:first-child {
+  border-bottom: 0.5px solid var(--hairline);
+}
+
+.wb-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 16px;
+}
+
+.wb-pane-label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.wb-original,
+.wb-translated {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--ink);
+}
+
+.wb-original {
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: var(--font-ui), var(--font-cjk);
+  padding: 0;
+}
+
+.wb-translated {
+  font-family: var(--font-cjk), var(--font-ui);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.wb-status {
+  flex: 0 0 auto;
+  min-height: 20px;
+  padding: 2px 16px 8px;
+  font-size: 12px;
+  color: var(--ink-3);
+}

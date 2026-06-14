@@ -15,16 +15,21 @@ const CARD_WIDTH = 340;
 export default function GlanceCard() {
   const [state, setState] = useState<GlanceState | null>(null);
   const [hiding, setHiding] = useState(false);
-  const [expandHint, setExpandHint] = useState(false);
   const [stateSeq, setStateSeq] = useState(0);
   const cardRef = useRef<HTMLDivElement>(null);
   const lastActivity = useRef(0);
+
+  // 展開到 Workbench：把當下原文 + 譯文帶過去（後端會關掉浮窗、開 Workbench）。
+  const handleExpand = () => {
+    if (state && state.kind === "result") {
+      api.openWorkbench(state.original, state.translated, state.target_lang);
+    }
+  };
 
   useEffect(() => {
     const unlistenState = listen<GlanceState>(GLANCE_STATE_EVENT, (event) => {
       setState(event.payload);
       setHiding(false);
-      setExpandHint(false);
       setStateSeq((n) => n + 1);
     });
     const unlistenHide = listen(GLANCE_WILL_HIDE_EVENT, () => setHiding(true));
@@ -60,7 +65,7 @@ export default function GlanceCard() {
     <div ref={cardRef} className="glance-card" onMouseMove={onMouseMove}>
       {state && (
         <div key={stateSeq} className={`glance-content ${hiding ? "hiding" : "showing"}`}>
-          <GlanceContent state={state} expandHint={expandHint} onExpand={() => setExpandHint(true)} />
+          <GlanceContent state={state} onExpand={handleExpand} />
         </div>
       )}
     </div>
@@ -69,11 +74,9 @@ export default function GlanceCard() {
 
 function GlanceContent({
   state,
-  expandHint,
   onExpand,
 }: {
   state: GlanceState;
-  expandHint: boolean;
   onExpand: () => void;
 }) {
   if (state.kind === "secret") {
@@ -101,8 +104,13 @@ function GlanceContent({
     <>
       <header className="glance-header">
         <span className="lang-label">{langLabel}</span>
-        <button className="expand-button" onClick={onExpand} title="Workbench 模式">
-          {expandHint ? "即將推出" : "⌘↩ 展開"}
+        <button
+          className="expand-button"
+          onClick={onExpand}
+          disabled={state.kind !== "result"}
+          title="展開到可編輯的工作台"
+        >
+          展開 ⌘↩
         </button>
       </header>
       <p className="glance-original">

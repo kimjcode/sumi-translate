@@ -51,6 +51,16 @@
 - accessory／選單列常駐形態延後到有選單列圖示時一起做（呼應 PRD「常駐工具」終態）。
 - 教訓：表象（閃退、狂跳密碼）當時其實是 ResizeObserver 凍結視窗高度 + Keychain 每次讀都跳密碼兩個獨立 bug，不是 accessory 造成；別被表象帶著改架構。
 
+## D5 — Workbench（P1）：字典來源、Gemini 串流、focus（2026-06-14）
+
+- **字典資料源（第一段「真字典」）**：選 **Free Dictionary API（dictionaryapi.dev）**。免 key、提供音標／詞性／英文釋義；查無此字回 404 → 視為 `None`（正常情況非錯誤）。英漢釋義（有道／mdict）延後。中文語境交給第二段 Gemini。
+- **Gemini（LLM）**：model `gemini-2.0-flash`（常數，易換版）。key 存 Keychain，account `gemini_api_key`，與 MT 的 key 分開管理（不塞進 MT 的 `Provider` enum）。
+- **真 token 串流**：用 reqwest 的 `chunk()` 逐塊讀 SSE（`?alt=sse`），以 **bytes 緩衝、只解碼整行**避免在 chunk 邊界切斷 CJK 多位元組字元。token 經 `workbench://llm-*` 事件串給前端，套朱色筆鋒游標。**不需新 crate**（`chunk()` 不在 `stream` feature 後面）。
+- **focus 行為**：Workbench 是**一般視窗**（`show()` + `set_focus()` 拿鍵盤焦點），與 Glance 的 non-activating panel 相反。沿用 P0「維持一般 App」的結論，不動 accessory。
+- **過濾層沿用**：重翻路徑一樣過 `filter::classify`；機密內容仍 `Secret` 不送出（紅線）。Workbench 是主動編輯，URL/路徑照翻（仍經機密過濾）。
+- **字典 ≠ LLM 的落實**：字典卡兩段，上段純字典資料（不經 LLM）、下段標明 Gemini，視覺與資料來源都分開。
+- **P1 全程未新增任何 crate**：字典 + Gemini + 串流全用既有 reqwest + Tauri events。
+
 ## 歷史決策（spike-01）
 
 - 全域監聽：手寫 CGEventTap（core-graphics），**不用 rdev**（macOS 26 上一按鍵就 crash，見 docs/spike-01.md）。

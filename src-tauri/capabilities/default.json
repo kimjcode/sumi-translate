@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main and glance windows",
-  "windows": ["main", "glance"],
+  "description": "Capability for the main, glance and workbench windows",
+  "windows": ["main", "glance", "workbench"],
   "permissions": [
     "core:default",
     "core:window:allow-hide",

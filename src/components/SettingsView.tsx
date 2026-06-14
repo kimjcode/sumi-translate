@@ -81,10 +81,18 @@ function SettingsForm() {
   const [keyDraft, setKeyDraft] = useState("");
   const [keyMessage, setKeyMessage] = useState("");
   const [pendingDeepl, setPendingDeepl] = useState(false);
+  const [geminiSet, setGeminiSet] = useState(false);
+  const [geminiDraft, setGeminiDraft] = useState("");
+  const [geminiMessage, setGeminiMessage] = useState("");
 
   const refreshKeyStatus = useCallback(async () => {
-    const [google, deepl] = await Promise.all([api.apiKeySet("google"), api.apiKeySet("deepl")]);
+    const [google, deepl, gemini] = await Promise.all([
+      api.apiKeySet("google"),
+      api.apiKeySet("deepl"),
+      api.llmKeySet(),
+    ]);
     setKeyStatus({ google, deepl });
+    setGeminiSet(gemini);
   }, []);
 
   useEffect(() => {
@@ -120,6 +128,23 @@ function SettingsForm() {
   const clearKey = async () => {
     await api.clearApiKey(activeProvider);
     setKeyMessage("已從 Keychain 移除");
+    refreshKeyStatus();
+  };
+
+  const saveGeminiKey = async () => {
+    try {
+      await api.setLlmKey(geminiDraft);
+      setGeminiDraft("");
+      setGeminiMessage("已存入 macOS Keychain");
+      refreshKeyStatus();
+    } catch (e) {
+      setGeminiMessage(String(e));
+    }
+  };
+
+  const clearGeminiKey = async () => {
+    await api.clearLlmKey();
+    setGeminiMessage("已從 Keychain 移除");
     refreshKeyStatus();
   };
 
@@ -203,6 +228,42 @@ function SettingsForm() {
             )}
           </div>
           {keyMessage && <p className="field-message">{keyMessage}</p>}
+        </div>
+      </section>
+
+      <section>
+        <h2>深度理解（Gemini）</h2>
+        <div className="field">
+          <label htmlFor="gemini-key">
+            Gemini API key
+            <span className={`key-status ${geminiSet ? "ok" : ""}`}>
+              {geminiSet ? "已設定" : "未設定"}
+            </span>
+          </label>
+          <div className="key-row">
+            <input
+              id="gemini-key"
+              type="password"
+              value={geminiDraft}
+              placeholder="Workbench 文法 / 語境用，只存入 macOS Keychain"
+              onChange={(e) => setGeminiDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && geminiDraft.trim()) saveGeminiKey();
+              }}
+            />
+            <button className="primary" disabled={!geminiDraft.trim()} onClick={saveGeminiKey}>
+              儲存
+            </button>
+            {geminiSet && (
+              <button className="secondary" onClick={clearGeminiKey}>
+                清除
+              </button>
+            )}
+          </div>
+          <p className="field-hint">
+            字典查詢免 key（公開字典 API）；只有文法 / 語境 / 改寫才用 Gemini。
+          </p>
+          {geminiMessage && <p className="field-message">{geminiMessage}</p>}
         </div>
       </section>
 

@@ -1,5 +1,8 @@
-//! 服務抽象層：MT provider 統一介面。外部 API 呼叫只能在這個模組（CLAUDE.md 邊界規則）。
+//! 服務抽象層：MT / LLM(Gemini) / Dictionary 統一介面。
+//! 外部 API 呼叫只能在這個模組（CLAUDE.md 邊界規則）。
 
+pub mod dictionary;
+pub mod llm;
 pub mod mt;
 
 use serde::{Deserialize, Serialize};
@@ -39,7 +42,11 @@ pub enum ProviderError {
 impl ProviderError {
     /// 給使用者看的訊息：說「怎麼了、怎麼解」（ui-spec 文案底線）。
     pub fn user_message(&self, provider: Provider) -> String {
-        let name = provider.display_name();
+        self.user_message_named(provider.display_name())
+    }
+
+    /// 同上，但服務名稱自帶（給 Gemini / Dictionary 等非 MT 服務用）。
+    pub fn user_message_named(&self, name: &str) -> String {
         match self {
             ProviderError::MissingKey => {
                 format!("尚未設定 {name} API key — 到 Sumi 設定視窗貼上即可")

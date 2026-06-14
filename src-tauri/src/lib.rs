@@ -3,6 +3,7 @@ mod pipeline;
 mod providers;
 mod settings;
 mod windows;
+mod workbench;
 
 use env_logger::Env;
 use tauri::{AppHandle, Manager};
@@ -35,6 +36,12 @@ fn glance_activity(app: AppHandle) {
     }
 }
 
+/// Glance 前端隱藏自己（展開到 Workbench 前先收掉浮窗）。
+#[tauri::command]
+fn hide_glance(app: AppHandle) {
+    windows::glance::hide(&app);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -45,11 +52,21 @@ pub fn run() {
             request_accessibility,
             open_accessibility_settings,
             glance_activity,
+            hide_glance,
             settings::get_settings,
             settings::set_settings,
             settings::set_api_key,
             settings::api_key_set,
             settings::clear_api_key,
+            settings::set_llm_key,
+            settings::llm_key_set,
+            settings::clear_llm_key,
+            workbench::open_workbench,
+            workbench::get_workbench_input,
+            workbench::close_workbench,
+            workbench::workbench_translate,
+            workbench::dictionary_lookup,
+            workbench::gemini_explain,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -57,7 +74,9 @@ pub fn run() {
             app.manage(settings::SettingsState::new(loaded));
             app.manage(windows::glance::GlanceState::default());
             app.manage(pipeline::PipelineState::new());
+            app.manage(workbench::WorkbenchState::new());
             windows::glance::init(&handle)?;
+            windows::workbench::init(&handle)?;
             monitor::spawn(handle);
             Ok(())
         })
