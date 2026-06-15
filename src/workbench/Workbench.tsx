@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   api,
   DictionaryEntry,
+  LangMode,
   langShortLabel,
   LANG_OPTIONS,
   LLM_DONE_EVENT,
@@ -24,6 +25,7 @@ export default function Workbench() {
   const [translated, setTranslated] = useState("");
   const [targetLang, setTargetLang] = useState("zh-TW");
   const [provider, setProvider] = useState("");
+  const [langMode, setLangMode] = useState<LangMode>("pairing");
   const [status, setStatus] = useState<string>("");
   const [narrow, setNarrow] = useState(false);
   const [card, setCard] = useState<DictCardState | null>(null);
@@ -47,7 +49,10 @@ export default function Workbench() {
     api.getWorkbenchInput().then((input) => {
       if (input) applyInput(input);
     });
-    api.getSettings().then((s) => setProvider(s.provider));
+    api.getSettings().then((s) => {
+      setProvider(s.provider);
+      setLangMode(s.lang_mode);
+    });
     const unInput = listen<WorkbenchInput>(WORKBENCH_INPUT_EVENT, (e) => applyInput(e.payload));
     return () => {
       unInput.then((f) => f());
@@ -115,6 +120,7 @@ export default function Workbench() {
         switch (res.kind) {
           case "ok":
             setTranslated(res.translated);
+            setTargetLang(res.target_lang); // 配對模式：反映解析後的方向
             setStatus(res.truncated ? "（已截斷）" : "");
             break;
           case "secret":
@@ -188,17 +194,24 @@ export default function Workbench() {
           <span className="wb-wordmark">Sumi</span>
         </div>
         <div className="wb-tools">
-          <select
-            value={targetLang}
-            onChange={(e) => onTargetLangChange(e.target.value)}
-            aria-label="目標語言"
-          >
-            {LANG_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {langShortLabel(o.value)}
-              </option>
-            ))}
-          </select>
+          {langMode === "pairing" ? (
+            // 配對模式：方向由路由自動決定，顯示解析後的目標（唯讀）。
+            <span className="wb-target" title="語言配對模式：方向自動決定">
+              → {langShortLabel(targetLang)}
+            </span>
+          ) : (
+            <select
+              value={targetLang}
+              onChange={(e) => onTargetLangChange(e.target.value)}
+              aria-label="目標語言"
+            >
+              {LANG_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {langShortLabel(o.value)}
+                </option>
+              ))}
+            </select>
+          )}
           {provider && <span className="wb-provider">{provider === "google" ? "Google" : "DeepL"}</span>}
           <button className="wb-copy" onClick={copyTranslation}>
             複製譯文

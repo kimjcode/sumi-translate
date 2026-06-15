@@ -18,7 +18,14 @@ const LLM_ACCOUNT: &str = "gemini_api_key";
 #[serde(default)]
 pub struct Settings {
     pub provider: Provider,
+    /// 語言模式：固定目標 / 語言配對。
+    pub lang_mode: crate::router::LangMode,
+    /// 固定模式的目標語言（舊行為）。
     pub target_lang: String,
+    /// 配對模式：我的語言（A）。
+    pub my_lang: String,
+    /// 配對模式：對照語言（B）。
+    pub counterpart_lang: String,
     pub double_press_ms: u64,
     pub idle_close_ms: u64,
     pub always_on_monitor: bool,
@@ -34,7 +41,11 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             provider: Provider::Google,
+            // 預設：配對模式，我的語言=繁中、對照語言=English（主要使用者＝台灣工程師）。
+            lang_mode: crate::router::LangMode::Pairing,
             target_lang: "zh-TW".into(),
+            my_lang: "zh-TW".into(),
+            counterpart_lang: "en".into(),
             double_press_ms: crate::monitor::double_press::DOUBLE_PRESS_WINDOW_MS,
             idle_close_ms: 6000,
             always_on_monitor: false,

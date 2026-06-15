@@ -268,22 +268,89 @@ function SettingsForm() {
       </section>
 
       <section>
-        <h2>翻譯行為</h2>
-        <div className="field">
-          <label htmlFor="target-lang">目標語言</label>
-          <select
-            id="target-lang"
-            value={settings.target_lang}
-            onChange={(e) => apply({ target_lang: e.target.value })}
-          >
-            {LANG_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <p className="field-hint">來源語言由翻譯引擎自動偵測。</p>
+        <h2>語言</h2>
+        <div className="radio-row">
+          <label>
+            <input
+              type="radio"
+              name="lang-mode"
+              checked={settings.lang_mode === "pairing"}
+              onChange={() => apply({ lang_mode: "pairing" })}
+            />
+            語言配對（雙向）
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="lang-mode"
+              checked={settings.lang_mode === "fixed"}
+              onChange={() => apply({ lang_mode: "fixed" })}
+            />
+            固定目標語言
+          </label>
         </div>
+
+        {settings.lang_mode === "pairing" ? (
+          <>
+            <div className="pairing-row">
+              <div className="field">
+                <label htmlFor="my-lang">我的語言</label>
+                <select
+                  id="my-lang"
+                  value={settings.my_lang}
+                  onChange={(e) => apply({ my_lang: e.target.value })}
+                >
+                  {LANG_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <span className="pairing-swap" aria-hidden>
+                ⇄
+              </span>
+              <div className="field">
+                <label htmlFor="counterpart-lang">對照語言</label>
+                <select
+                  id="counterpart-lang"
+                  value={settings.counterpart_lang}
+                  onChange={(e) => apply({ counterpart_lang: e.target.value })}
+                >
+                  {LANG_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <p className="field-hint">
+              對照語言來源 → 翻成我的語言；我的語言來源 → 翻成對照語言；其他外語 →
+              翻成我的語言。來源由翻譯引擎自動偵測，不需反轉鈕。
+            </p>
+          </>
+        ) : (
+          <div className="field">
+            <label htmlFor="target-lang">目標語言</label>
+            <select
+              id="target-lang"
+              value={settings.target_lang}
+              onChange={(e) => apply({ target_lang: e.target.value })}
+            >
+              {LANG_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <p className="field-hint">永遠翻成這個語言；來源由翻譯引擎自動偵測。</p>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2>觸發與浮窗</h2>
         <div className="field">
           <label htmlFor="double-press">雙擊 ⌘C 時間窗（毫秒）</label>
           <input

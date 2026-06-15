@@ -3,9 +3,14 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type Provider = "google" | "deepl";
 
+export type LangMode = "fixed" | "pairing";
+
 export interface Settings {
   provider: Provider;
+  lang_mode: LangMode;
   target_lang: string;
+  my_lang: string;
+  counterpart_lang: string;
   double_press_ms: number;
   idle_close_ms: number;
   always_on_monitor: boolean;
@@ -21,7 +26,13 @@ export interface WorkbenchInput {
 }
 
 export type WbTranslation =
-  | { kind: "ok"; translated: string; detected_source: string | null; truncated: boolean }
+  | {
+      kind: "ok";
+      translated: string;
+      detected_source: string | null;
+      truncated: boolean;
+      target_lang: string;
+    }
   | { kind: "secret" }
   | { kind: "empty" }
   | { kind: "error"; message: string };

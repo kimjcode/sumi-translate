@@ -57,6 +57,11 @@ html.workbench-window body {
   color: var(--ink-3);
 }
 
+.wb-target {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
 .wb-copy {
   font-size: 12px;
   color: var(--ink-2);

@@ -1,6 +1,7 @@
 mod monitor;
 mod pipeline;
 mod providers;
+mod router;
 mod settings;
 mod windows;
 mod workbench;

@@ -11,8 +11,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::monitor::{filter, pasteboard};
-use crate::providers::{self, Provider, Translation};
-use crate::settings::SettingsState;
+use crate::providers::{self, Provider};
+use crate::router::{self, Routed};
+use crate::settings::{Settings, SettingsState};
 use crate::windows::glance;
 
 pub const STATE_EVENT: &str = "glance://state";
@@ -43,7 +44,7 @@ pub enum GlanceMsg {
 
 pub struct PipelineState {
     request_seq: AtomicU64,
-    cache: Mutex<Vec<(u64, Translation)>>,
+    cache: Mutex<Vec<(u64, Routed)>>,
     client: reqwest::Client,
 }
 
@@ -56,7 +57,7 @@ impl PipelineState {
         }
     }
 
-    fn cache_get(&self, key: u64) -> Option<Translation> {
+    fn cache_get(&self, key: u64) -> Option<Routed> {
         let mut cache = self.cache.lock().expect("cache mutex poisoned");
         let idx = cache.iter().position(|(k, _)| *k == key)?;
         let entry = cache.remove(idx);
@@ -65,7 +66,7 @@ impl PipelineState {
         Some(value)
     }
 
-    fn cache_put(&self, key: u64, value: Translation) {
+    fn cache_put(&self, key: u64, value: Routed) {
         let mut cache = self.cache.lock().expect("cache mutex poisoned");
         cache.retain(|(k, _)| *k != key);
         cache.push((key, value));
@@ -75,12 +76,23 @@ impl PipelineState {
     }
 }
 
-fn cache_key(provider: Provider, target_lang: &str, text: &str) -> u64 {
+/// 快取鍵：把「決定路由結果的設定」納入（同一段文字在不同配對/目標下結果不同）。
+fn cache_key(provider: Provider, routing_sig: &str, text: &str) -> u64 {
     let mut h = DefaultHasher::new();
     provider.hash(&mut h);
-    target_lang.hash(&mut h);
+    routing_sig.hash(&mut h);
     text.hash(&mut h);
     h.finish()
+}
+
+/// 代表當下路由設定的字串簽章，用於快取鍵。
+fn routing_signature(settings: &Settings) -> String {
+    match settings.lang_mode {
+        router::LangMode::Fixed => format!("fixed:{}", settings.target_lang),
+        router::LangMode::Pairing => {
+            format!("pair:{}>{}", settings.my_lang, settings.counterpart_lang)
+        }
+    }
 }
 
 /// 雙擊觸發入口。可從任意執行緒（event tap）呼叫；實際處理排到主執行緒
@@ -134,10 +146,10 @@ fn show(app: &AppHandle, msg: GlanceMsg) {
 fn translate_and_show(app: &AppHandle, text: String, truncated: bool) {
     let settings = app.state::<SettingsState>().snapshot();
     let provider = settings.provider;
-    let target_lang = settings.target_lang.clone();
     let state = app.state::<PipelineState>();
 
-    let key = cache_key(provider, &target_lang, &text);
+    let sig = routing_signature(&settings);
+    let key = cache_key(provider, &sig, &text);
     if let Some(hit) = state.cache_get(key) {
         log::info!("cache hit, showing stored translation");
         show(
@@ -147,7 +159,7 @@ fn translate_and_show(app: &AppHandle, text: String, truncated: bool) {
                 translated: hit.text,
                 detected_source: hit.detected_source,
                 truncated,
-                target_lang,
+                target_lang: hit.target_lang,
                 provider: provider.display_name().into(),
             },
         );
@@ -165,12 +177,17 @@ fn translate_and_show(app: &AppHandle, text: String, truncated: bool) {
         return;
     };
 
+    // 配對模式下實際目標要等偵測才知道；loading 標籤先用「我的語言」作暫顯（過場用）。
+    let loading_target = match settings.lang_mode {
+        router::LangMode::Fixed => settings.target_lang.clone(),
+        router::LangMode::Pairing => settings.my_lang.clone(),
+    };
     show(
         app,
         GlanceMsg::Loading {
             original: text.clone(),
             truncated,
-            target_lang: target_lang.clone(),
+            target_lang: loading_target,
             provider: provider.display_name().into(),
         },
     );
@@ -180,34 +197,34 @@ fn translate_and_show(app: &AppHandle, text: String, truncated: bool) {
     let app2 = app.clone();
 
     tauri::async_runtime::spawn(async move {
-        let outcome = run_translation(provider, &client, &api_key, &text, &target_lang).await;
+        let outcome = run_translation(&settings, provider, &client, &api_key, &text).await;
         let state = app2.state::<PipelineState>();
         if state.request_seq.load(Ordering::SeqCst) != request_id {
             return; // 已有更新的觸發，丟棄這筆結果
         }
         match outcome {
-            Ok(translation) => {
-                state.cache_put(key, translation.clone());
+            Ok(routed) => {
+                state.cache_put(key, routed.clone());
                 // 使用者已按 Esc 關掉就不要再彈回來；結果已入快取。
                 if !glance::is_visible(&app2) {
                     return;
                 }
-                // ⌘↩ 展開用：記下當下可展開內容。
+                // ⌘↩ 展開用：記下當下可展開內容（含解析後的目標語言）。
                 glance::set_expandable(
                     &app2,
                     text.clone(),
-                    translation.text.clone(),
-                    target_lang.clone(),
+                    routed.text.clone(),
+                    routed.target_lang.clone(),
                 );
                 let _ = app2.emit_to(
                     glance::GLANCE_LABEL,
                     STATE_EVENT,
                     GlanceMsg::Result {
                         original: text,
-                        translated: translation.text,
-                        detected_source: translation.detected_source,
+                        translated: routed.text,
+                        detected_source: routed.detected_source,
                         truncated,
-                        target_lang,
+                        target_lang: routed.target_lang,
                         provider: provider.display_name().into(),
                     },
                 );
@@ -225,30 +242,31 @@ fn translate_and_show(app: &AppHandle, text: String, truncated: bool) {
 }
 
 async fn run_translation(
+    settings: &Settings,
     provider: Provider,
     client: &reqwest::Client,
     api_key: &str,
     text: &str,
-    target_lang: &str,
-) -> Result<Translation, String> {
-    // 診斷用：記 provider / 目標語言 / 字元數，不記內容（紅線）。
+) -> Result<Routed, String> {
+    // 診斷用：記 provider / 模式 / 字元數，不記內容（紅線）。
     log::info!(
-        "translating via {} → target={:?} ({} chars)",
+        "translating via {} (mode={:?}, {} chars)",
         provider.display_name(),
-        target_lang,
+        settings.lang_mode,
         text.chars().count()
     );
     let started = Instant::now();
-    match providers::translate(provider, client, api_key, text, target_lang).await {
-        Ok(translation) => {
+    match router::translate_routed(settings, provider, api_key, client, text).await {
+        Ok(routed) => {
             // 紅線：只 log 統計值，不 log 內容。
             log::info!(
-                "{} translated {} chars in {}ms",
+                "{} translated {} chars → {} in {}ms",
                 provider.display_name(),
                 text.chars().count(),
+                routed.target_lang,
                 started.elapsed().as_millis()
             );
-            Ok(translation)
+            Ok(routed)
         }
         Err(e) => {
             log::warn!(

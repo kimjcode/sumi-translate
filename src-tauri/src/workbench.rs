@@ -54,6 +54,8 @@ pub enum WbTranslation {
         translated: String,
         detected_source: Option<String>,
         truncated: bool,
+        /// 解析後實際翻成的目標語言（配對模式下由路由決定）。
+        target_lang: String,
     },
     /// 疑似機密 → 不送出（沿用 P0 過濾層紅線）。
     Secret,
@@ -142,17 +144,20 @@ async fn run_mt(app: &AppHandle, text: String, truncated: bool) -> WbTranslation
         };
     };
     let client = app.state::<WorkbenchState>().dict_client.clone();
-    match providers::translate(provider, &client, &api_key, &text, &snapshot.target_lang).await {
-        Ok(t) => {
+    // 走路由層：配對模式會自動解析方向（與 Glance 一致）。
+    match crate::router::translate_routed(&snapshot, provider, &api_key, &client, &text).await {
+        Ok(routed) => {
             log::info!(
-                "workbench re-translated {} chars via {}",
+                "workbench re-translated {} chars via {} → {}",
                 text.chars().count(),
-                provider.display_name()
+                provider.display_name(),
+                routed.target_lang
             );
             WbTranslation::Ok {
-                translated: t.text,
-                detected_source: t.detected_source,
+                translated: routed.text,
+                detected_source: routed.detected_source,
                 truncated,
+                target_lang: routed.target_lang,
             }
         }
         Err(e) => WbTranslation::Error {

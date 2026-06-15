@@ -75,6 +75,22 @@
   gap: 16px;
 }
 
+.pairing-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.pairing-row .field {
+  flex: 1;
+}
+
+.pairing-swap {
+  color: var(--accent);
+  font-size: 18px;
+  padding-bottom: 7px;
+}
+
 .radio-row label {
   display: flex;
   align-items: center;
