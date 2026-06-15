@@ -30,6 +30,8 @@ use double_press::DoublePressDetector;
 const KEYCODE_C: i64 = 8;
 /// kVK_Escape。浮窗永不取得鍵盤焦點，Esc 只能在全域監聽層處理。
 const KEYCODE_ESCAPE: i64 = 53;
+/// kVK_Return。⌘↩ 展開到 Workbench——同 Esc，浮窗收不到鍵盤事件，只能在這裡攔。
+const KEYCODE_RETURN: i64 = 36;
 
 /// 啟動全域監聽。等到 Accessibility 權限就緒才建立 event tap，
 /// 因此授權後不需重啟 App。
@@ -120,6 +122,13 @@ fn on_key_down(app: &AppHandle, detector: &RefCell<DoublePressDetector>, event: 
         }
     } else if code == KEYCODE_ESCAPE && glance::is_visible(app) {
         glance::hide(app);
+    } else if code == KEYCODE_RETURN
+        && event.get_flags().contains(CGEventFlags::CGEventFlagCommand)
+        && glance::is_visible(app)
+    {
+        // ⌘↩：展開到 Workbench。只在 Glance 顯示時生效，不影響系統其他 ⌘↩。
+        log::info!("Cmd+Return on Glance → expand to Workbench");
+        crate::workbench::expand_from_glance(app);
     }
 }
 

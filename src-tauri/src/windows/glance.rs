@@ -5,6 +5,7 @@
 //! 顯示用 orderFrontRegardless、隱藏用 orderOut，全程不經過會搶焦點的路徑。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use objc2::runtime::AnyObject;
@@ -45,6 +46,32 @@ pub struct GlanceState {
     pub visible: AtomicBool,
     /// 每次 show / 活動 +1；閒置計時器以此判斷自己是否已過期。
     pub idle_generation: AtomicU64,
+    /// 當下可展開到 Workbench 的內容（只有顯示 Result 時有值）。
+    /// 浮窗拿不到鍵盤焦點，⌘↩ 由全域 tap 處理，需從這裡取內容。
+    expandable: Mutex<Option<Expandable>>,
+}
+
+#[derive(Clone)]
+pub struct Expandable {
+    pub original: String,
+    pub translated: String,
+    pub target_lang: String,
+}
+
+/// 記下當下可展開內容（pipeline 顯示 Result 時呼叫）。
+pub fn set_expandable(app: &AppHandle, original: String, translated: String, target_lang: String) {
+    *app.state::<GlanceState>().expandable.lock().expect("expandable poisoned") =
+        Some(Expandable { original, translated, target_lang });
+}
+
+/// 清掉可展開內容（loading / secret / error 時）。
+pub fn clear_expandable(app: &AppHandle) {
+    *app.state::<GlanceState>().expandable.lock().expect("expandable poisoned") = None;
+}
+
+/// 取出當下可展開內容（⌘↩ 觸發展開時用）。
+pub fn take_expandable(app: &AppHandle) -> Option<Expandable> {
+    app.state::<GlanceState>().expandable.lock().expect("expandable poisoned").clone()
 }
 
 /// 啟動時建立浮窗（隱藏）並轉成 NSPanel。必須在主執行緒（Tauri setup）呼叫。

@@ -117,6 +117,16 @@ fn handle_on_main(app: AppHandle) {
 }
 
 fn show(app: &AppHandle, msg: GlanceMsg) {
+    // 只有 Result 可展開到 Workbench；其餘狀態清掉，避免 ⌘↩ 展開到舊內容。
+    match &msg {
+        GlanceMsg::Result {
+            original,
+            translated,
+            target_lang,
+            ..
+        } => glance::set_expandable(app, original.clone(), translated.clone(), target_lang.clone()),
+        _ => glance::clear_expandable(app),
+    }
     let _ = app.emit_to(glance::GLANCE_LABEL, STATE_EVENT, msg);
     glance::show_at_cursor(app);
 }
@@ -182,6 +192,13 @@ fn translate_and_show(app: &AppHandle, text: String, truncated: bool) {
                 if !glance::is_visible(&app2) {
                     return;
                 }
+                // ⌘↩ 展開用：記下當下可展開內容。
+                glance::set_expandable(
+                    &app2,
+                    text.clone(),
+                    translation.text.clone(),
+                    target_lang.clone(),
+                );
                 let _ = app2.emit_to(
                     glance::GLANCE_LABEL,
                     STATE_EVENT,

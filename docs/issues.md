@@ -66,3 +66,9 @@
 - **根因**：定位用 `monitor_from_point(cursor)` 取螢幕，但它底層用 CGDisplayBounds（logical 點），而 `cursor_position` 給的是 physical 像素；Retina（2x）上座標對不上 → 回 `None` → 整段夾邊界邏輯被跳過 → 浮窗毫無邊界保護。另外原本用 `monitor.size()`（全螢幕）而非可視工作區。
 - **修法**：改自己用 `available_monitors()`（position/size 皆 physical）比對找游標所在螢幕；用其 `work_area()`（已扣 Dock/選單列）夾邊界，近底時往游標上方開。
 - **狀態**：Fixed
+
+### 10. Glance 上按 ⌘↩ 沒反應
+- **症狀**：Glance 浮窗顯示「展開 ⌘↩」，但按 ⌘↩ 無作用（只能用滑鼠點「展開」鈕）。
+- **根因**：Glance 是 non-activating panel、`canBecomeKeyWindow=false`，永遠拿不到鍵盤焦點，前端收不到 keydown（同 Esc 的處境）。當時也根本沒有任何 ⌘↩ handler。
+- **修法**：跟 Esc 一樣在全域 event tap 攔截——`KEYCODE_RETURN` + ⌘ flag + Glance 顯示中才觸發，不註冊系統 global-shortcut（只在浮窗顯示時生效，不影響別處的 ⌘↩）。後端在顯示 Result 時記下可展開內容供 tap 取用。
+- **狀態**：Fixed

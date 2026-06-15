@@ -73,26 +73,35 @@ pub enum LlmEvent {
 
 // ── Commands ───────────────────────────────────────────────────────────────
 
-/// Glance「展開」→ 帶入內容、關 Glance、開 Workbench。
-#[tauri::command]
-pub fn open_workbench(
-    app: AppHandle,
-    state: tauri::State<'_, WorkbenchState>,
-    original: String,
-    translated: String,
-    target_lang: String,
-) {
+/// 帶入內容、關 Glance、開 Workbench。前端按鈕與全域 ⌘↩ 共用此路徑。
+fn open_with(app: &AppHandle, original: String, translated: String, target_lang: String) {
     let input = WorkbenchInput {
         original,
         translated,
         target_lang,
     };
-    *state.input.lock().expect("workbench input poisoned") = Some(input.clone());
-    glance::hide(&app);
-    wb_window::show(&app);
+    *app.state::<WorkbenchState>()
+        .input
+        .lock()
+        .expect("workbench input poisoned") = Some(input.clone());
+    glance::hide(app);
+    wb_window::show(app);
     // 視窗在啟動時就掛載、之後只 show/hide（React 不重新掛載），所以每次展開都推事件，
     // 讓前端更新內容並清掉殘留的單字卡。
     let _ = app.emit_to(wb_window::WORKBENCH_LABEL, INPUT_EVENT, input);
+}
+
+/// Glance「展開」鈕（前端滑鼠點擊）→ 帶入內容開 Workbench。
+#[tauri::command]
+pub fn open_workbench(app: AppHandle, original: String, translated: String, target_lang: String) {
+    open_with(&app, original, translated, target_lang);
+}
+
+/// 全域 ⌘↩（在 event tap 中觸發，因浮窗拿不到鍵盤焦點）→ 用當下 Glance 內容展開。
+pub fn expand_from_glance(app: &AppHandle) {
+    if let Some(e) = glance::take_expandable(app) {
+        open_with(app, e.original, e.translated, e.target_lang);
+    }
 }
 
 /// Workbench 前端掛載時讀取帶入的原文 / 譯文。
