@@ -23,6 +23,31 @@ import "./Workbench.css";
 const RETRANSLATE_DEBOUNCE_MS = 400;
 const NARROW_BREAKPOINT = 520;
 
+// Session 快取一筆：字典結果 + 兩段 Gemini 的最終內容。complete = 兩段都已結束。
+interface CacheEntry {
+  dictEntry: DictionaryEntry | null;
+  dictMiss: boolean;
+  fallbackText: string;
+  fallbackError: string | null;
+  grammar: string;
+  grammarError: string | null;
+  grammarDone: boolean;
+  defineDone: boolean; // 非 miss 時無 define 串流 → 預設 true
+}
+
+function newCacheEntry(): CacheEntry {
+  return {
+    dictEntry: null,
+    dictMiss: false,
+    fallbackText: "",
+    fallbackError: null,
+    grammar: "",
+    grammarError: null,
+    grammarDone: false,
+    defineDone: true,
+  };
+}
+
 export default function Workbench() {
   const [original, setOriginal] = useState("");
   const [translated, setTranslated] = useState("");
@@ -38,6 +63,9 @@ export default function Workbench() {
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const llmSeq = useRef(0);
   const defSeq = useRef(0);
+  // Session 快取：鍵 = 還原後原形 + 語言方向；in-memory，applyInput（關閉再開）時清空。
+  const cache = useRef<Map<string, CacheEntry>>(new Map());
+  const activeKey = useRef<string | null>(null);
 
   const applyInput = (input: WorkbenchInput) => {
     setOriginal(input.original);
@@ -47,6 +75,15 @@ export default function Workbench() {
     setCard(null); // 清掉上一次殘留的單字卡
     llmSeq.current = 0; // 作廢上一次的串流
     defSeq.current = 0;
+    cache.current.clear(); // 關閉再開 → 快取清空、重新查
+    activeKey.current = null;
+  };
+
+  // 把某通道完成的內容寫回 session 快取（done/error 時呼叫）。
+  const cacheComplete = (patch: Partial<CacheEntry>) => {
+    const key = activeKey.current;
+    if (!key) return;
+    cache.current.set(key, { ...newCacheEntry(), ...cache.current.get(key), ...patch });
   };
 
   // 帶入 Glance 的原文 + 譯文：初次掛載讀一次 + 每次展開收事件更新。
@@ -105,12 +142,20 @@ export default function Workbench() {
     });
     const unDone = listen<LlmEvent>(LLM_DONE_EVENT, (e) => {
       if (e.payload.kind !== "done" || e.payload.seq !== llmSeq.current) return;
-      setCard((c) => (c ? { ...c, grammarStreaming: false } : c));
+      setCard((c) => {
+        if (!c) return c;
+        cacheComplete({ grammar: c.grammar, grammarError: null, grammarDone: true });
+        return { ...c, grammarStreaming: false };
+      });
     });
     const unErr = listen<LlmEvent>(LLM_ERROR_EVENT, (e) => {
       if (e.payload.kind !== "error" || e.payload.seq !== llmSeq.current) return;
       const message = e.payload.message;
-      setCard((c) => (c ? { ...c, grammarStreaming: false, grammarError: message } : c));
+      setCard((c) => {
+        if (!c) return c;
+        cacheComplete({ grammar: c.grammar, grammarError: message, grammarDone: true });
+        return { ...c, grammarStreaming: false, grammarError: message };
+      });
     });
     return () => {
       unToken.then((f) => f());
@@ -128,12 +173,20 @@ export default function Workbench() {
     });
     const unDone = listen<LlmEvent>(DEF_DONE_EVENT, (e) => {
       if (e.payload.kind !== "done" || e.payload.seq !== defSeq.current) return;
-      setCard((c) => (c ? { ...c, fallbackStreaming: false } : c));
+      setCard((c) => {
+        if (!c) return c;
+        cacheComplete({ fallbackText: c.fallbackText, fallbackError: null, defineDone: true });
+        return { ...c, fallbackStreaming: false };
+      });
     });
     const unErr = listen<LlmEvent>(DEF_ERROR_EVENT, (e) => {
       if (e.payload.kind !== "error" || e.payload.seq !== defSeq.current) return;
       const message = e.payload.message;
-      setCard((c) => (c ? { ...c, fallbackStreaming: false, fallbackError: message } : c));
+      setCard((c) => {
+        if (!c) return c;
+        cacheComplete({ fallbackText: c.fallbackText, fallbackError: message, defineDone: true });
+        return { ...c, fallbackStreaming: false, fallbackError: message };
+      });
     });
     return () => {
       unToken.then((f) => f());
@@ -181,45 +234,69 @@ export default function Workbench() {
     if (original.trim()) retranslate(original);
   };
 
-  // 點選原文一個字 → 字典卡 + Gemini 文法。
+  // 點選原文一個字 → 詞形還原 → 查 session 快取 → 命中即回；未命中才查 ECDICT / Gemini。
   const onOriginalMouseUp = (e: React.MouseEvent<HTMLTextAreaElement>) => {
     const ta = originalRef.current;
     if (!ta) return;
     const word = wordAtCaret(ta.value, ta.selectionStart, ta.selectionEnd);
     if (!word) return;
+    const anchor = { x: e.clientX, y: e.clientY }; // 先抓，避免 async 後事件被回收
+    const sentence = ta.value;
 
-    setCard({
-      word,
-      anchor: { x: e.clientX, y: e.clientY },
-      dictEntry: null,
-      dictLoading: true,
-      dictMiss: false,
-      fallbackText: "",
-      fallbackStreaming: false,
-      fallbackError: null,
-      grammar: "",
-      grammarStreaming: true,
-      grammarError: null,
-    });
+    api.dictionaryLookup(word).then(({ entry, lemma }) => {
+      const key = `${lemma}|${targetLang}`; // 鍵 = 還原後原形 + 語言方向
+      activeKey.current = key;
+      const hit = cache.current.get(key);
 
-    api.dictionaryLookup(word).then((entry: DictionaryEntry | null) => {
-      if (entry) {
-        setCard((c) => (c && c.word === word ? { ...c, dictEntry: entry, dictLoading: false } : c));
-      } else {
-        // ECDICT 查無 → 退回 Gemini 短釋義（上段，標明 LLM）。
-        setCard((c) =>
-          c && c.word === word
-            ? { ...c, dictLoading: false, dictMiss: true, fallbackStreaming: true }
-            : c,
-        );
-        api.geminiDefine(word, ta.value, targetLang).then((seq) => {
+      // 快取命中（兩段都已結束）→ 秒回，不再打 Gemini。
+      if (hit && hit.grammarDone && hit.defineDone) {
+        setCard({
+          word,
+          anchor,
+          dictEntry: hit.dictEntry,
+          dictLoading: false,
+          dictMiss: hit.dictMiss,
+          fallbackText: hit.fallbackText,
+          fallbackStreaming: false,
+          fallbackError: hit.fallbackError,
+          grammar: hit.grammar,
+          grammarStreaming: false,
+          grammarError: hit.grammarError,
+        });
+        return;
+      }
+
+      // 未命中：開新查詢。先記字典結果到快取，Gemini 兩段完成時再補。
+      const miss = !entry;
+      cache.current.set(key, {
+        ...newCacheEntry(),
+        dictEntry: entry,
+        dictMiss: miss,
+        defineDone: !miss, // 非 miss 無 define 串流
+      });
+      setCard({
+        word,
+        anchor,
+        dictEntry: entry,
+        dictLoading: false,
+        dictMiss: miss,
+        fallbackText: "",
+        fallbackStreaming: miss,
+        fallbackError: null,
+        grammar: "",
+        grammarStreaming: true,
+        grammarError: null,
+      });
+      // 查無 → 上段 Gemini 短釋義補充。
+      if (miss) {
+        api.geminiDefine(word, sentence, targetLang).then((seq) => {
           defSeq.current = seq;
         });
       }
-    });
-    // 下段文法：串流事件用後端回傳的真實 seq 過濾（IPC 比首 token 快）。
-    api.geminiExplain(word, ta.value, targetLang).then((seq) => {
-      llmSeq.current = seq;
+      // 下段文法：串流事件用後端回傳的真實 seq 過濾（IPC 比首 token 快）。
+      api.geminiExplain(word, sentence, targetLang).then((seq) => {
+        llmSeq.current = seq;
+      });
     });
   };
 

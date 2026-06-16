@@ -21,21 +21,45 @@ pub struct DictMeaning {
     pub definitions: Vec<String>,
 }
 
+/// 查詢結果：含還原後的原形（lemma），給 session 快取當鍵用。
+#[derive(Clone, Debug, Serialize)]
+pub struct DictLookup {
+    pub entry: Option<DictionaryEntry>,
+    /// 還原後的原形（小寫）。查無時 = 小寫原字。
+    pub lemma: String,
+}
+
 /// 唯讀開啟 ECDICT SQLite。
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
 }
 
-/// 查單字（大小寫不敏感）。查無回 `None`（正常情況，交由上層走 Gemini fallback）。
-pub fn lookup(conn: &Connection, word: &str) -> Option<DictionaryEntry> {
+/// 查單字：先直接查 → 查無則用 `lemma` 表還原成原形再查（wakes/woke → wake）。
+/// 一律回傳還原後的原形（lemma）；entry 查無回 `None`（交由上層走 Gemini fallback）。
+pub fn lookup(conn: &Connection, word: &str) -> DictLookup {
     let key = word.trim().to_lowercase();
     if key.is_empty() {
-        return None;
+        return DictLookup { entry: None, lemma: key };
     }
+    // 1. 直接查（變化型若本身也是收錄字，這裡先命中）。
+    if let Some(entry) = query_entry(conn, &key) {
+        return DictLookup { entry: Some(entry), lemma: key };
+    }
+    // 2. 詞形還原：變化型 → 原形，用原形再查。
+    if let Some(lemma) = query_lemma(conn, &key) {
+        let lemma = lemma.to_lowercase();
+        let entry = query_entry(conn, &lemma);
+        return DictLookup { entry, lemma };
+    }
+    // 3. 查無：lemma = 原字（給快取鍵用）。
+    DictLookup { entry: None, lemma: key }
+}
+
+fn query_entry(conn: &Connection, word_lower: &str) -> Option<DictionaryEntry> {
     let row = conn
         .query_row(
             "SELECT word, phonetic, translation FROM ecdict WHERE word_lower = ?1 LIMIT 1",
-            [&key],
+            [word_lower],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -46,13 +70,22 @@ pub fn lookup(conn: &Connection, word: &str) -> Option<DictionaryEntry> {
         )
         .optional()
         .ok()??;
-
     let (headword, phonetic, translation) = row;
     Some(DictionaryEntry {
         word: headword,
         phonetic: format_phonetic(&phonetic),
         meanings: parse_meanings(&translation),
     })
+}
+
+fn query_lemma(conn: &Connection, form: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT word FROM lemma WHERE form = ?1 LIMIT 1",
+        [form],
+        |r| r.get::<_, String>(0),
+    )
+    .optional()
+    .ok()?
 }
 
 fn format_phonetic(raw: &str) -> Option<String> {

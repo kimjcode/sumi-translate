@@ -48,6 +48,11 @@ export interface DictionaryEntry {
   meanings: DictMeaning[];
 }
 
+export interface DictLookup {
+  entry: DictionaryEntry | null;
+  lemma: string; // 還原後的原形（快取鍵用）
+}
+
 export const WORKBENCH_INPUT_EVENT = "workbench://input";
 export const LLM_TOKEN_EVENT = "workbench://llm-token";
 export const LLM_DONE_EVENT = "workbench://llm-done";
@@ -99,7 +104,7 @@ export const api = {
   getWorkbenchInput: () => invoke<WorkbenchInput | null>("get_workbench_input"),
   closeWorkbench: () => invoke<void>("close_workbench"),
   workbenchTranslate: (text: string) => invoke<WbTranslation>("workbench_translate", { text }),
-  dictionaryLookup: (word: string) => invoke<DictionaryEntry | null>("dictionary_lookup", { word }),
+  dictionaryLookup: (word: string) => invoke<DictLookup>("dictionary_lookup", { word }),
   geminiExplain: (word: string, sentence: string, targetLang: string) =>
     invoke<number>("gemini_explain", { word, sentence, targetLang }),
   geminiDefine: (word: string, sentence: string, targetLang: string) =>

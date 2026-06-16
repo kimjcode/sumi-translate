@@ -12,7 +12,7 @@ use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::monitor::filter;
-use crate::providers::{self, dictionary::DictionaryEntry};
+use crate::providers::{self, dictionary::DictLookup};
 use crate::settings::SettingsState;
 use crate::windows::{glance, workbench as wb_window};
 
@@ -189,10 +189,10 @@ async fn run_mt(app: &AppHandle, text: String, truncated: bool) -> WbTranslation
     }
 }
 
-/// 點字 → 真字典（第一段，ECDICT 本地英漢，非 LLM）。查無此字回 null（前端走 Gemini fallback）。
-/// 全本地、不送任何東西出去（隱私）。
+/// 點字 → 真字典（第一段，ECDICT 本地英漢，非 LLM）。回傳含「還原後原形(lemma)」+ entry。
+/// 查無 entry 由前端走 Gemini fallback。全本地、不送任何東西出去（隱私）。
 #[tauri::command]
-pub fn dictionary_lookup(app: AppHandle, word: String) -> Option<DictionaryEntry> {
+pub fn dictionary_lookup(app: AppHandle, word: String) -> DictLookup {
     let wb = app.state::<WorkbenchState>();
     let mut guard = wb.ecdict.lock().expect("ecdict mutex poisoned");
     if guard.is_none() {
@@ -200,7 +200,10 @@ pub fn dictionary_lookup(app: AppHandle, word: String) -> Option<DictionaryEntry
             Some(conn) => *guard = Some(conn),
             None => {
                 log::warn!("ecdict.sqlite 找不到——請先跑 `npm run build:dict`");
-                return None;
+                return DictLookup {
+                    entry: None,
+                    lemma: word.trim().to_lowercase(),
+                };
             }
         }
     }

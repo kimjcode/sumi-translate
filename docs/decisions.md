@@ -10,8 +10,11 @@
 - **打包形式**：完整版做成 SQLite 當 app resource 打包（`bundle.resources`），rusqlite 索引查詢、不全載入記憶體。**不做首次下載**（離線精神）。
 - **繁中（台灣）轉換**：ECDICT 原始是簡體。**在資料準備階段離線用 OpenCC `s2twp` 轉繁中+台灣用詞**（軟體/記憶體/陣列/滑鼠/非同步…），出貨的 SQLite 已是繁中。app 執行期**不帶 OpenCC**。
   - 已知限制（先接受）：少數冷僻技術術語的兩岸差異 `s2twp` 不一定全中，可能殘留大陸譯法；之後靠 P2「使用者字典/術語庫」覆蓋，本任務不處理。
-- **體積取捨**：完整版 3.4M 條（含片語）317MB 過大。**只收「單一英文單字」且有語料頻率/考試詞表/Collins-Oxford 標記者** → 5.8 萬詞、**5.6MB**。對齊前端點單字查詢，多字片語永不會被點到故濾除。長尾罕見詞交給 Gemini fallback。
+- **體積取捨**：完整版 3.4M 條（含片語）317MB 過大。**只收「單一英文單字」且有語料頻率/考試詞表/Collins-Oxford 標記者** → 5.8 萬詞、約 **8MB**（含詞形還原表）。對齊前端點單字查詢，多字片語永不會被點到故濾除。長尾罕見詞交給 Gemini fallback。
+- **詞形還原（D）**：ECDICT 收原形。用 ECDICT 自帶的 `exchange` 欄（記過去式/分詞/複數/三單/比較級…）反建一張 `lemma(form→原形)` 表，打包在同一個 SQLite。查詢順序：**直接查 → 查無則用 lemma 表還原成原形再查**（wakes/woke → wake）。變化型若本身也是收錄字，direct 先命中不受影響。還原後仍查無 → Gemini fallback。約 5.5 萬筆對照，幾乎零額外成本。
 - **查無 fallback**：ECDICT 查無 → 退回 Gemini 給一行短中文釋義，**上段標明「Gemini 補充」**（與下段文法分開的 `workbench://def-*` 事件通道），不開天窗。
+- **Session 快取（E）**：lazy + in-memory（前端 Map），**鍵 = 還原後原形 + 語言方向**（故 wakes/waking 命中同一筆）。同一 Workbench 內重複點同字秒回、不再打 Gemini（最該快取的是慢又花 token 的 Gemini 兩段；ECDICT 本地快，順帶一起快取）。**不預載**（只為真實點擊付費，呼應隱私）。**applyInput（關閉再開）時清空** → 天然的「重新整理」。只有兩段 Gemini 都結束才算可命中（避免回放半成品）。
+  - 查詢層順序：`點字 → 詞形還原 → 用原形查快取 → 命中即回；未命中才查 ECDICT/Gemini → 完成存回快取`。
 - **新增 crate**：`rusqlite`（`bundled`，內建 SQLite，不依賴系統庫）。OpenCC 只是建置工具（`pip3 install opencc`），非 app 依賴、非 Rust crate。
 - **大檔處理**：產物 `src-tauri/resources/ecdict.sqlite` **不進 git**（`.gitignore`），由 `npm run build:dict`（`scripts/build-dict.py`）下載 pin 住的 ECDICT + 轉繁 + 產生。下載來源/版本 pin 在腳本內。**build / tauri dev 前需先跑 `npm run build:dict`**（README 與 CLAUDE.md 指令區已註明）。
 - **隱私**：字典查詢全本地、零外送；只有查無 fallback 與下段語境才走 Gemini（需網路）。
