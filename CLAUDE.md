@@ -80,9 +80,12 @@ Windows/Linux · OCR/截圖翻譯 · plugin system · 多 agent · 登入/帳號
 
 ## 常用指令
 ```
+# dict:  npm run build:dict         # 產生 Workbench 字典（ECDICT 英漢→繁中 SQLite）
+#                                   # ★ dev / build 前需先跑一次；需 pip3 install opencc
 # dev:   npm run tauri dev          # 啟動 App（需先 npm install；權限注意事項見 README）
 # build: npm run tauri build        # 打包 .app
 # lint:  TBD（尚未設置）
 # test:  (cd src-tauri && cargo test --lib)   # Rust 純邏輯單元測試
 ```
 > 注意：`Cargo.lock` 將 `time` 釘在 0.3.47（0.3.48 與 rustc 1.96 有 coherence 衝突，見 docs/spike-01.md）。升級依賴時勿拉回 0.3.48。
+> 字典產物 `src-tauri/resources/ecdict.sqlite` 不進 git，由 `npm run build:dict` 產生（見 docs/decisions.md D7）。

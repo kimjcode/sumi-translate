@@ -5,8 +5,15 @@ import "./DictionaryCard.css";
 export interface DictCardState {
   word: string;
   anchor: { x: number; y: number };
+  // 上段：ECDICT 真字典
   dictEntry: DictionaryEntry | null;
   dictLoading: boolean;
+  // 上段 fallback：ECDICT 查無 → Gemini 短釋義（標明 LLM）
+  dictMiss: boolean;
+  fallbackText: string;
+  fallbackStreaming: boolean;
+  fallbackError: string | null;
+  // 下段：Gemini 文法/語境
   grammar: string;
   grammarStreaming: boolean;
   grammarError: string | null;
@@ -47,7 +54,7 @@ export default function DictionaryCard({
       style={{ left: pos.left, top: pos.top, width: CARD_WIDTH }}
       onClick={(e) => e.stopPropagation()}
     >
-      {/* 第一段：真字典（事實性，非 LLM） */}
+      {/* 第一段：真字典（ECDICT 英漢，事實性、非 LLM）。查無時退回 Gemini 短釋義（標明 LLM）。 */}
       <section className="dict-section">
         <div className="dict-head">
           <span className="dict-word">{card.dictEntry?.word ?? card.word}</span>
@@ -70,6 +77,20 @@ export default function DictionaryCard({
               </li>
             ))}
           </ul>
+        ) : card.dictMiss ? (
+          <div className="dict-fallback">
+            <div className="llm-label">
+              字典查無 · <span className="llm-provider">Gemini 補充</span>
+            </div>
+            {card.fallbackError ? (
+              <p className="dict-muted">{card.fallbackError}</p>
+            ) : (
+              <p className="llm-text">
+                {card.fallbackText}
+                {card.fallbackStreaming && <span className="brush-cursor" aria-label="生成中" />}
+              </p>
+            )}
+          </div>
         ) : (
           <p className="dict-muted">字典查無此字</p>
         )}

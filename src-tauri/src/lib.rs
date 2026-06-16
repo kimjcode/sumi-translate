@@ -68,6 +68,7 @@ pub fn run() {
             workbench::workbench_translate,
             workbench::dictionary_lookup,
             workbench::gemini_explain,
+            workbench::gemini_define,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

@@ -31,3 +31,7 @@ dist-ssr
 
 # Rust
 src-tauri/target
+
+# ECDICT 字典產物與下載快取（用 npm run build:dict 重建，不進 git）
+src-tauri/resources/ecdict.sqlite
+scripts/.cache/

@@ -11,13 +11,17 @@ macOS 常駐翻譯工具：複製文字 → 雙擊 `⌘C`，譯文浮窗（Glanc
 - [Rust](https://rustup.rs/)（stable，經 rustup 安裝）
 - Node.js 18+ 與 npm
 - Xcode Command Line Tools
+- Python 3 + OpenCC（建置字典用）：`pip3 install opencc`
 
 ## 啟動
 
 ```bash
 npm install
+npm run build:dict   # ★ 產生 Workbench 英漢字典（首次必跑；下載 ECDICT + 簡轉繁，約 1 分鐘）
 npm run tauri dev
 ```
+
+> `npm run build:dict` 會產生 `src-tauri/resources/ecdict.sqlite`（不進 git）。**`npm run tauri dev` / `build` 前需先跑過一次**，否則 Workbench 點字字典上段會查無（退回 Gemini 補充）。換 ECDICT 版本只改 `scripts/build-dict.py` 頂部的 pin。
 
 ## 首次設定（兩步）
 

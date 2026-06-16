@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   api,
+  DEF_DONE_EVENT,
+  DEF_ERROR_EVENT,
+  DEF_TOKEN_EVENT,
   DictionaryEntry,
   LangMode,
   langShortLabel,
@@ -34,6 +37,7 @@ export default function Workbench() {
   const originalRef = useRef<HTMLTextAreaElement>(null);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const llmSeq = useRef(0);
+  const defSeq = useRef(0);
 
   const applyInput = (input: WorkbenchInput) => {
     setOriginal(input.original);
@@ -42,6 +46,7 @@ export default function Workbench() {
     setStatus("");
     setCard(null); // 清掉上一次殘留的單字卡
     llmSeq.current = 0; // 作廢上一次的串流
+    defSeq.current = 0;
   };
 
   // 帶入 Glance 的原文 + 譯文：初次掛載讀一次 + 每次展開收事件更新。
@@ -114,6 +119,29 @@ export default function Workbench() {
     };
   }, []);
 
+  // 上段字典查無時的 Gemini 補充串流（def-* 通道，依 defSeq 過濾）。
+  useEffect(() => {
+    const unToken = listen<LlmEvent>(DEF_TOKEN_EVENT, (e) => {
+      if (e.payload.kind !== "token" || e.payload.seq !== defSeq.current) return;
+      const delta = e.payload.delta;
+      setCard((c) => (c ? { ...c, fallbackText: c.fallbackText + delta, fallbackStreaming: true } : c));
+    });
+    const unDone = listen<LlmEvent>(DEF_DONE_EVENT, (e) => {
+      if (e.payload.kind !== "done" || e.payload.seq !== defSeq.current) return;
+      setCard((c) => (c ? { ...c, fallbackStreaming: false } : c));
+    });
+    const unErr = listen<LlmEvent>(DEF_ERROR_EVENT, (e) => {
+      if (e.payload.kind !== "error" || e.payload.seq !== defSeq.current) return;
+      const message = e.payload.message;
+      setCard((c) => (c ? { ...c, fallbackStreaming: false, fallbackError: message } : c));
+    });
+    return () => {
+      unToken.then((f) => f());
+      unDone.then((f) => f());
+      unErr.then((f) => f());
+    };
+  }, []);
+
   const retranslate = useCallback(
     (text: string) => {
       api.workbenchTranslate(text).then((res: WbTranslation) => {
@@ -165,15 +193,31 @@ export default function Workbench() {
       anchor: { x: e.clientX, y: e.clientY },
       dictEntry: null,
       dictLoading: true,
+      dictMiss: false,
+      fallbackText: "",
+      fallbackStreaming: false,
+      fallbackError: null,
       grammar: "",
       grammarStreaming: true,
       grammarError: null,
     });
 
     api.dictionaryLookup(word).then((entry: DictionaryEntry | null) => {
-      setCard((c) => (c && c.word === word ? { ...c, dictEntry: entry, dictLoading: false } : c));
+      if (entry) {
+        setCard((c) => (c && c.word === word ? { ...c, dictEntry: entry, dictLoading: false } : c));
+      } else {
+        // ECDICT 查無 → 退回 Gemini 短釋義（上段，標明 LLM）。
+        setCard((c) =>
+          c && c.word === word
+            ? { ...c, dictLoading: false, dictMiss: true, fallbackStreaming: true }
+            : c,
+        );
+        api.geminiDefine(word, ta.value, targetLang).then((seq) => {
+          defSeq.current = seq;
+        });
+      }
     });
-    // 串流事件用後端回傳的真實 seq 過濾（IPC 比首 token 快，更新先於 token 抵達）。
+    // 下段文法：串流事件用後端回傳的真實 seq 過濾（IPC 比首 token 快）。
     api.geminiExplain(word, ta.value, targetLang).then((seq) => {
       llmSeq.current = seq;
     });

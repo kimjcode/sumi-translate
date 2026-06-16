@@ -1,11 +1,14 @@
 //! Workbench 服務層：展開、重翻（沿用過濾層 + MT）、字典查詢、Gemini 文法串流。
 //! 紅線：不 log 原文/剪貼簿內容；機密內容不送出；key 只在 Keychain。
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
+use rusqlite::Connection;
 use serde::Serialize;
+use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::monitor::filter;
@@ -17,6 +20,10 @@ pub const INPUT_EVENT: &str = "workbench://input";
 pub const LLM_TOKEN_EVENT: &str = "workbench://llm-token";
 pub const LLM_DONE_EVENT: &str = "workbench://llm-done";
 pub const LLM_ERROR_EVENT: &str = "workbench://llm-error";
+// 上段字典查無 → Gemini 短釋義補充（與下段文法分開的事件通道）。
+pub const DEF_TOKEN_EVENT: &str = "workbench://def-token";
+pub const DEF_DONE_EVENT: &str = "workbench://def-done";
+pub const DEF_ERROR_EVENT: &str = "workbench://def-error";
 
 #[derive(Clone, Serialize)]
 pub struct WorkbenchInput {
@@ -28,8 +35,11 @@ pub struct WorkbenchInput {
 pub struct WorkbenchState {
     input: Mutex<Option<WorkbenchInput>>,
     llm_seq: AtomicU64,
+    def_seq: AtomicU64,
     dict_client: reqwest::Client,
     llm_client: reqwest::Client,
+    /// ECDICT SQLite 連線（唯讀），首次查詢時 lazy 開啟。
+    ecdict: Mutex<Option<Connection>>,
 }
 
 impl WorkbenchState {
@@ -37,14 +47,27 @@ impl WorkbenchState {
         Self {
             input: Mutex::new(None),
             llm_seq: AtomicU64::new(0),
+            def_seq: AtomicU64::new(0),
             dict_client: providers::http_client(),
             // 串流不能套整體 timeout（會在串到一半時被切），只留 connect timeout。
             llm_client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(5))
                 .build()
                 .expect("failed to build LLM HTTP client"),
+            ecdict: Mutex::new(None),
         }
     }
+}
+
+/// 解析 ECDICT SQLite 路徑：先打包資源目錄，dev 時 fallback 到原始碼樹。
+fn ecdict_path(app: &AppHandle) -> Option<PathBuf> {
+    if let Ok(p) = app.path().resolve("resources/ecdict.sqlite", BaseDirectory::Resource) {
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/ecdict.sqlite");
+    dev.exists().then_some(dev)
 }
 
 #[derive(Clone, Serialize)]
@@ -166,34 +189,60 @@ async fn run_mt(app: &AppHandle, text: String, truncated: bool) -> WbTranslation
     }
 }
 
-/// 點字 → 真字典（第一段，非 LLM）。查無此字回 null。
+/// 點字 → 真字典（第一段，ECDICT 本地英漢，非 LLM）。查無此字回 null（前端走 Gemini fallback）。
+/// 全本地、不送任何東西出去（隱私）。
 #[tauri::command]
-pub async fn dictionary_lookup(
-    app: AppHandle,
-    word: String,
-) -> Result<Option<DictionaryEntry>, String> {
-    let client = app.state::<WorkbenchState>().dict_client.clone();
-    providers::dictionary::lookup(&client, &word)
-        .await
-        .map_err(|e| e.user_message_named("字典"))
+pub fn dictionary_lookup(app: AppHandle, word: String) -> Option<DictionaryEntry> {
+    let wb = app.state::<WorkbenchState>();
+    let mut guard = wb.ecdict.lock().expect("ecdict mutex poisoned");
+    if guard.is_none() {
+        match ecdict_path(&app).and_then(|p| providers::dictionary::open(&p).ok()) {
+            Some(conn) => *guard = Some(conn),
+            None => {
+                log::warn!("ecdict.sqlite 找不到——請先跑 `npm run build:dict`");
+                return None;
+            }
+        }
+    }
+    providers::dictionary::lookup(guard.as_ref().unwrap(), &word)
 }
 
-/// 點字 → Gemini 文法/語境（第二段，LLM，真串流）。回傳 request id；
-/// token 透過 `workbench://llm-*` 事件串給前端。
-#[tauri::command]
-pub fn gemini_explain(
-    app: AppHandle,
-    word: String,
-    sentence: String,
-    target_lang: String,
-) -> u64 {
+/// 兩條 Gemini 串流通道：下段文法 / 上段字典查無補充。
+#[derive(Clone, Copy)]
+enum Channel {
+    Grammar,
+    Define,
+}
+
+impl Channel {
+    fn events(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Channel::Grammar => (LLM_TOKEN_EVENT, LLM_DONE_EVENT, LLM_ERROR_EVENT),
+            Channel::Define => (DEF_TOKEN_EVENT, DEF_DONE_EVENT, DEF_ERROR_EVENT),
+        }
+    }
+}
+
+fn current_seq(wb: &WorkbenchState, channel: Channel) -> u64 {
+    match channel {
+        Channel::Grammar => wb.llm_seq.load(Ordering::SeqCst),
+        Channel::Define => wb.def_seq.load(Ordering::SeqCst),
+    }
+}
+
+/// 共用：起一條 Gemini 串流，token 經對應事件通道串給前端；回傳 request id（供取消比對）。
+fn run_gemini_stream(app: AppHandle, prompt: String, channel: Channel) -> u64 {
     let state = app.state::<WorkbenchState>();
-    let seq = state.llm_seq.fetch_add(1, Ordering::SeqCst) + 1;
+    let seq = match channel {
+        Channel::Grammar => state.llm_seq.fetch_add(1, Ordering::SeqCst) + 1,
+        Channel::Define => state.def_seq.fetch_add(1, Ordering::SeqCst) + 1,
+    };
+    let (tok_event, done_event, err_event) = channel.events();
 
     let Some(api_key) = app.state::<SettingsState>().llm_api_key() else {
         let _ = app.emit_to(
             wb_window::WORKBENCH_LABEL,
-            LLM_ERROR_EVENT,
+            err_event,
             LlmEvent::Error {
                 seq,
                 message: "尚未設定 Gemini API key — 到設定視窗貼上即可".into(),
@@ -203,19 +252,17 @@ pub fn gemini_explain(
     };
 
     let client = state.llm_client.clone();
-    let prompt = build_explain_prompt(&word, &sentence, &target_lang);
     let app2 = app.clone();
 
     tauri::async_runtime::spawn(async move {
-        let wb = app2.state::<WorkbenchState>();
         let result = providers::llm::stream_generate(&client, &api_key, &prompt, |delta| {
             // 被新的查詢取代就停止這條串流。
-            if wb.llm_seq.load(Ordering::SeqCst) != seq {
+            if current_seq(&app2.state::<WorkbenchState>(), channel) != seq {
                 return false;
             }
             let _ = app2.emit_to(
                 wb_window::WORKBENCH_LABEL,
-                LLM_TOKEN_EVENT,
+                tok_event,
                 LlmEvent::Token {
                     seq,
                     delta: delta.to_string(),
@@ -225,19 +272,19 @@ pub fn gemini_explain(
         })
         .await;
 
-        if app2.state::<WorkbenchState>().llm_seq.load(Ordering::SeqCst) != seq {
+        if current_seq(&app2.state::<WorkbenchState>(), channel) != seq {
             return; // 已被取代，不發 done/error
         }
         match result {
             Ok(()) => {
-                let _ = app2.emit_to(wb_window::WORKBENCH_LABEL, LLM_DONE_EVENT, LlmEvent::Done { seq });
+                let _ = app2.emit_to(wb_window::WORKBENCH_LABEL, done_event, LlmEvent::Done { seq });
             }
             Err(e) => {
                 // 診斷：API 錯誤訊息（如 404 列出可用 model），非使用者內容。
                 log::warn!("gemini stream failed: {e:?}");
                 let _ = app2.emit_to(
                     wb_window::WORKBENCH_LABEL,
-                    LLM_ERROR_EVENT,
+                    err_event,
                     LlmEvent::Error {
                         seq,
                         message: e.user_message_named("Gemini"),
@@ -248,6 +295,20 @@ pub fn gemini_explain(
     });
 
     seq
+}
+
+/// 點字 → Gemini 文法/語境（下段，LLM，真串流）。token 經 `workbench://llm-*`。
+#[tauri::command]
+pub fn gemini_explain(app: AppHandle, word: String, sentence: String, target_lang: String) -> u64 {
+    let prompt = build_explain_prompt(&word, &sentence, &target_lang);
+    run_gemini_stream(app, prompt, Channel::Grammar)
+}
+
+/// 字典查無 → Gemini 短中文釋義補充（上段，標明是 LLM）。token 經 `workbench://def-*`。
+#[tauri::command]
+pub fn gemini_define(app: AppHandle, word: String, sentence: String, target_lang: String) -> u64 {
+    let prompt = build_define_prompt(&word, &sentence, &target_lang);
+    run_gemini_stream(app, prompt, Channel::Define)
 }
 
 fn lang_name(code: &str) -> &str {
@@ -271,5 +332,15 @@ fn build_explain_prompt(word: &str, sentence: &str, target_lang: &str) -> String
          句子：{sentence}\n\
          指定單字：{word}\n\n\
          用簡短分點，聚焦文法與語境，不要重複字典定義。"
+    )
+}
+
+/// 字典查無時的補充釋義 prompt：要求一行字典式釋義（含詞性），台灣用語。
+fn build_define_prompt(word: &str, sentence: &str, target_lang: &str) -> String {
+    let lang = lang_name(target_lang);
+    format!(
+        "你是英漢字典。用{lang}（台灣用語）給出單字「{word}」在這個句子裡最貼切的簡短意思，\
+         像字典釋義一行（可含詞性縮寫，如 n./v./adj.），不要例句、不要文法說明、不要客套。\n\
+         句子：{sentence}"
     )
 }

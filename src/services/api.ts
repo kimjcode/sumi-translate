@@ -52,6 +52,10 @@ export const WORKBENCH_INPUT_EVENT = "workbench://input";
 export const LLM_TOKEN_EVENT = "workbench://llm-token";
 export const LLM_DONE_EVENT = "workbench://llm-done";
 export const LLM_ERROR_EVENT = "workbench://llm-error";
+// 上段字典查無 → Gemini 短釋義補充（與下段文法分開的事件通道）。
+export const DEF_TOKEN_EVENT = "workbench://def-token";
+export const DEF_DONE_EVENT = "workbench://def-done";
+export const DEF_ERROR_EVENT = "workbench://def-error";
 
 export type LlmEvent =
   | { kind: "token"; seq: number; delta: string }
@@ -98,6 +102,8 @@ export const api = {
   dictionaryLookup: (word: string) => invoke<DictionaryEntry | null>("dictionary_lookup", { word }),
   geminiExplain: (word: string, sentence: string, targetLang: string) =>
     invoke<number>("gemini_explain", { word, sentence, targetLang }),
+  geminiDefine: (word: string, sentence: string, targetLang: string) =>
+    invoke<number>("gemini_define", { word, sentence, targetLang }),
 };
 
 export const LANG_OPTIONS: { value: string; label: string }[] = [

@@ -2,6 +2,20 @@
 
 > 已拍板的產品/技術決策。改這裡之前先取得共識；PRD/CLAUDE.md 沒寫清楚的，以本檔為準。
 
+## D7 — Workbench 字典上段改用 ECDICT 英漢（2026-06-16）
+
+字典卡上段從英英（Free Dictionary API）換成英漢（ECDICT 本地 SQLite）。字典 ≠ LLM 不變：上段純字典資料、下段 Gemini 語境照舊。背景見 `docs/spike-system-dictionary.md`（為何不走系統辭典）。
+
+- **資料源／授權**：ECDICT 1.0.28（`skywind3000/ECDICT`），**MIT 授權（Copyright 2025 Linwei），可隨 app 散布**。
+- **打包形式**：完整版做成 SQLite 當 app resource 打包（`bundle.resources`），rusqlite 索引查詢、不全載入記憶體。**不做首次下載**（離線精神）。
+- **繁中（台灣）轉換**：ECDICT 原始是簡體。**在資料準備階段離線用 OpenCC `s2twp` 轉繁中+台灣用詞**（軟體/記憶體/陣列/滑鼠/非同步…），出貨的 SQLite 已是繁中。app 執行期**不帶 OpenCC**。
+  - 已知限制（先接受）：少數冷僻技術術語的兩岸差異 `s2twp` 不一定全中，可能殘留大陸譯法；之後靠 P2「使用者字典/術語庫」覆蓋，本任務不處理。
+- **體積取捨**：完整版 3.4M 條（含片語）317MB 過大。**只收「單一英文單字」且有語料頻率/考試詞表/Collins-Oxford 標記者** → 5.8 萬詞、**5.6MB**。對齊前端點單字查詢，多字片語永不會被點到故濾除。長尾罕見詞交給 Gemini fallback。
+- **查無 fallback**：ECDICT 查無 → 退回 Gemini 給一行短中文釋義，**上段標明「Gemini 補充」**（與下段文法分開的 `workbench://def-*` 事件通道），不開天窗。
+- **新增 crate**：`rusqlite`（`bundled`，內建 SQLite，不依賴系統庫）。OpenCC 只是建置工具（`pip3 install opencc`），非 app 依賴、非 Rust crate。
+- **大檔處理**：產物 `src-tauri/resources/ecdict.sqlite` **不進 git**（`.gitignore`），由 `npm run build:dict`（`scripts/build-dict.py`）下載 pin 住的 ECDICT + 轉繁 + 產生。下載來源/版本 pin 在腳本內。**build / tauri dev 前需先跑 `npm run build:dict`**（README 與 CLAUDE.md 指令區已註明）。
+- **隱私**：字典查詢全本地、零外送；只有查無 fallback 與下段語境才走 Gemini（需網路）。
+
 ## D6 — 語言配對模式（2026-06-15）
 
 讓目標語言依偵測到的來源自動決定，免反轉鈕、一個設定通吃雙向。邏輯放在語言/路由層（`router.rs`），Glance 與 Workbench 共用。

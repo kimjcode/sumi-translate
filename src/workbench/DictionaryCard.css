@@ -81,6 +81,12 @@
   color: var(--ink-3);
 }
 
+.dict-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .dict-divider {
   height: 0.5px;
   background: var(--hairline);
