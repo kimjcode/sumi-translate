@@ -67,7 +67,6 @@ pub fn run() {
             workbench::close_workbench,
             workbench::workbench_translate,
             workbench::dictionary_lookup,
-            workbench::gemini_explain,
             workbench::gemini_define,
         ])
         .setup(|app| {

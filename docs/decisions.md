@@ -2,9 +2,17 @@
 
 > 已拍板的產品/技術決策。改這裡之前先取得共識；PRD/CLAUDE.md 沒寫清楚的，以本檔為準。
 
-## D7 — Workbench 字典上段改用 ECDICT 英漢（2026-06-16）
+## D7 — Workbench 字典卡：ECDICT 英漢 + 簡化為「只留字典」（2026-06-16）
 
-字典卡上段從英英（Free Dictionary API）換成英漢（ECDICT 本地 SQLite）。字典 ≠ LLM 不變：上段純字典資料、下段 Gemini 語境照舊。背景見 `docs/spike-system-dictionary.md`（為何不走系統辭典）。
+字典來源從英英（Free Dictionary API）換成英漢（ECDICT 本地 SQLite）。背景見 `docs/spike-system-dictionary.md`（為何不走系統辭典）。
+
+**字典卡簡化（2026-06-16 修訂）**：實際使用後決定**移除下段「逐字 Gemini 文法/語境」整段**，字典卡只剩字典。
+- 理由：點單字時字典就夠；逐字 Gemini 語意價值低，且原「上段+下段」在 ECDICT 查無時會對同一字**發兩個 Gemini 請求**，是 503/變慢/內容自相矛盾的根因。
+- **命中字典 → 純本地真字典**（音標/詞性/中文），完全不打 Gemini。
+- **查無 → 只發一個 Gemini 請求**取「AI 字義」，明確標示「AI 字義 · Gemini（字典未收錄，AI 推測）」，不做假字典框。同時涵蓋罕見技術詞（bootloader）與非英文拉丁詞（西語 sentir）。
+- **語言路由**：字典區塊由「ECDICT 命中」決定，**不再用「拉丁字母=英文」猜語言**（避免西/法語誤判）。
+- **錯誤處理**：查無只剩單一請求；其 503/429/網路錯誤**自動短退避重試 ≤2 次**（且僅在尚未串出 token 時），仍失敗才給友善繁中訊息，**不露原始英文錯誤**。
+- **「整段語法糾正」**（句/段級，非逐字）移至 backlog 之後規劃，不在此卡。
 
 - **資料源／授權**：ECDICT 1.0.28（`skywind3000/ECDICT`），**MIT 授權（Copyright 2025 Linwei），可隨 app 散布**。
 - **打包形式**：完整版做成 SQLite 當 app resource 打包（`bundle.resources`），rusqlite 索引查詢、不全載入記憶體。**不做首次下載**（離線精神）。
@@ -12,12 +20,12 @@
   - 已知限制（先接受）：少數冷僻技術術語的兩岸差異 `s2twp` 不一定全中，可能殘留大陸譯法；之後靠 P2「使用者字典/術語庫」覆蓋，本任務不處理。
 - **體積取捨**：完整版 3.4M 條（含片語）317MB 過大。**只收「單一英文單字」且有語料頻率/考試詞表/Collins-Oxford 標記者** → 5.8 萬詞、約 **8MB**（含詞形還原表）。對齊前端點單字查詢，多字片語永不會被點到故濾除。長尾罕見詞交給 Gemini fallback。
 - **詞形還原（D）**：ECDICT 收原形。用 ECDICT 自帶的 `exchange` 欄（記過去式/分詞/複數/三單/比較級…）反建一張 `lemma(form→原形)` 表，打包在同一個 SQLite。查詢順序：**直接查 → 查無則用 lemma 表還原成原形再查**（wakes/woke → wake）。變化型若本身也是收錄字，direct 先命中不受影響。還原後仍查無 → Gemini fallback。約 5.5 萬筆對照，幾乎零額外成本。
-- **查無 fallback**：ECDICT 查無 → 退回 Gemini 給一行短中文釋義，**上段標明「Gemini 補充」**（與下段文法分開的 `workbench://def-*` 事件通道），不開天窗。
-- **Session 快取（E）**：lazy + in-memory（前端 Map），**鍵 = 還原後原形 + 語言方向**（故 wakes/waking 命中同一筆）。同一 Workbench 內重複點同字秒回、不再打 Gemini（最該快取的是慢又花 token 的 Gemini 兩段；ECDICT 本地快，順帶一起快取）。**不預載**（只為真實點擊付費，呼應隱私）。**applyInput（關閉再開）時清空** → 天然的「重新整理」。只有兩段 Gemini 都結束才算可命中（避免回放半成品）。
-  - 查詢層順序：`點字 → 詞形還原 → 用原形查快取 → 命中即回；未命中才查 ECDICT/Gemini → 完成存回快取`。
+- **查無 fallback**：見上方「字典卡簡化」——單一 AI 字義請求（`workbench://def-*` 事件通道），不開天窗。
+- **Session 快取（E）**：lazy + in-memory（前端 Map），**鍵 = 還原後原形 + 語言方向**（故 wakes/waking 命中同一筆）。快取「字典結果 或 單一 AI 字義」；同一 Workbench 內重複點同字秒回、查無時不再打 Gemini。**不預載**（只為真實點擊付費，呼應隱私）。**applyInput（關閉再開）時清空** → 天然的「重新整理」。查無需待 AI 字義結束才算可命中（避免回放半成品）。
+  - 查詢層順序：`點字 → 詞形還原 → 用原形查快取 → 命中即回；未命中才查 ECDICT；查無才發單一 AI 字義 → 完成存回快取`。
 - **新增 crate**：`rusqlite`（`bundled`，內建 SQLite，不依賴系統庫）。OpenCC 只是建置工具（`pip3 install opencc`），非 app 依賴、非 Rust crate。
 - **大檔處理**：產物 `src-tauri/resources/ecdict.sqlite` **不進 git**（`.gitignore`），由 `npm run build:dict`（`scripts/build-dict.py`）下載 pin 住的 ECDICT + 轉繁 + 產生。下載來源/版本 pin 在腳本內。**build / tauri dev 前需先跑 `npm run build:dict`**（README 與 CLAUDE.md 指令區已註明）。
-- **隱私**：字典查詢全本地、零外送；只有查無 fallback 與下段語境才走 Gemini（需網路）。
+- **隱私**：字典查詢全本地、零外送；只有查無時的單一 AI 字義才走 Gemini（需網路）。
 
 ## D6 — 語言配對模式（2026-06-15）
 

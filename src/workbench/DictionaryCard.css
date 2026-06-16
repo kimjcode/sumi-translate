@@ -104,6 +104,13 @@
   color: var(--accent);
 }
 
+.ai-note {
+  margin-left: 6px;
+  font-size: 10px;
+  color: var(--ink-3);
+  text-transform: none;
+}
+
 .llm-text {
   margin: 0;
   font-size: 13px;

@@ -9,9 +9,6 @@ import {
   LangMode,
   langShortLabel,
   LANG_OPTIONS,
-  LLM_DONE_EVENT,
-  LLM_ERROR_EVENT,
-  LLM_TOKEN_EVENT,
   LlmEvent,
   WbTranslation,
   WORKBENCH_INPUT_EVENT,
@@ -23,29 +20,13 @@ import "./Workbench.css";
 const RETRANSLATE_DEBOUNCE_MS = 400;
 const NARROW_BREAKPOINT = 520;
 
-// Session 快取一筆：字典結果 + 兩段 Gemini 的最終內容。complete = 兩段都已結束。
+// Session 快取一筆：字典結果（命中）或單一 AI 字義（查無）。done = 可命中（AI 字義已結束）。
 interface CacheEntry {
   dictEntry: DictionaryEntry | null;
   dictMiss: boolean;
   fallbackText: string;
   fallbackError: string | null;
-  grammar: string;
-  grammarError: string | null;
-  grammarDone: boolean;
-  defineDone: boolean; // 非 miss 時無 define 串流 → 預設 true
-}
-
-function newCacheEntry(): CacheEntry {
-  return {
-    dictEntry: null,
-    dictMiss: false,
-    fallbackText: "",
-    fallbackError: null,
-    grammar: "",
-    grammarError: null,
-    grammarDone: false,
-    defineDone: true,
-  };
+  done: boolean; // 命中字典→true；查無→AI 字義結束時 true
 }
 
 export default function Workbench() {
@@ -61,7 +42,6 @@ export default function Workbench() {
   const rootRef = useRef<HTMLDivElement>(null);
   const originalRef = useRef<HTMLTextAreaElement>(null);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const llmSeq = useRef(0);
   const defSeq = useRef(0);
   // Session 快取：鍵 = 還原後原形 + 語言方向；in-memory，applyInput（關閉再開）時清空。
   const cache = useRef<Map<string, CacheEntry>>(new Map());
@@ -73,17 +53,17 @@ export default function Workbench() {
     setTargetLang(input.target_lang);
     setStatus("");
     setCard(null); // 清掉上一次殘留的單字卡
-    llmSeq.current = 0; // 作廢上一次的串流
-    defSeq.current = 0;
+    defSeq.current = 0; // 作廢上一次的串流
     cache.current.clear(); // 關閉再開 → 快取清空、重新查
     activeKey.current = null;
   };
 
-  // 把某通道完成的內容寫回 session 快取（done/error 時呼叫）。
+  // 把 AI 字義完成的內容寫回 session 快取（def done/error 時呼叫）。
   const cacheComplete = (patch: Partial<CacheEntry>) => {
     const key = activeKey.current;
-    if (!key) return;
-    cache.current.set(key, { ...newCacheEntry(), ...cache.current.get(key), ...patch });
+    const existing = cache.current.get(key ?? "");
+    if (!key || !existing) return;
+    cache.current.set(key, { ...existing, ...patch });
   };
 
   // 帶入 Glance 的原文 + 譯文：初次掛載讀一次 + 每次展開收事件更新。
@@ -133,38 +113,7 @@ export default function Workbench() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [card]);
 
-  // LLM 串流事件：依 seq 過濾，逐 token 累積到字典卡的文法段。
-  useEffect(() => {
-    const unToken = listen<LlmEvent>(LLM_TOKEN_EVENT, (e) => {
-      if (e.payload.kind !== "token" || e.payload.seq !== llmSeq.current) return;
-      const delta = e.payload.delta;
-      setCard((c) => (c ? { ...c, grammar: c.grammar + delta, grammarStreaming: true } : c));
-    });
-    const unDone = listen<LlmEvent>(LLM_DONE_EVENT, (e) => {
-      if (e.payload.kind !== "done" || e.payload.seq !== llmSeq.current) return;
-      setCard((c) => {
-        if (!c) return c;
-        cacheComplete({ grammar: c.grammar, grammarError: null, grammarDone: true });
-        return { ...c, grammarStreaming: false };
-      });
-    });
-    const unErr = listen<LlmEvent>(LLM_ERROR_EVENT, (e) => {
-      if (e.payload.kind !== "error" || e.payload.seq !== llmSeq.current) return;
-      const message = e.payload.message;
-      setCard((c) => {
-        if (!c) return c;
-        cacheComplete({ grammar: c.grammar, grammarError: message, grammarDone: true });
-        return { ...c, grammarStreaming: false, grammarError: message };
-      });
-    });
-    return () => {
-      unToken.then((f) => f());
-      unDone.then((f) => f());
-      unErr.then((f) => f());
-    };
-  }, []);
-
-  // 上段字典查無時的 Gemini 補充串流（def-* 通道，依 defSeq 過濾）。
+  // 字典查無時的 AI 字義串流（def-* 通道，依 defSeq 過濾）。
   useEffect(() => {
     const unToken = listen<LlmEvent>(DEF_TOKEN_EVENT, (e) => {
       if (e.payload.kind !== "token" || e.payload.seq !== defSeq.current) return;
@@ -175,7 +124,7 @@ export default function Workbench() {
       if (e.payload.kind !== "done" || e.payload.seq !== defSeq.current) return;
       setCard((c) => {
         if (!c) return c;
-        cacheComplete({ fallbackText: c.fallbackText, fallbackError: null, defineDone: true });
+        cacheComplete({ fallbackText: c.fallbackText, fallbackError: null, done: true });
         return { ...c, fallbackStreaming: false };
       });
     });
@@ -184,7 +133,7 @@ export default function Workbench() {
       const message = e.payload.message;
       setCard((c) => {
         if (!c) return c;
-        cacheComplete({ fallbackText: c.fallbackText, fallbackError: message, defineDone: true });
+        cacheComplete({ fallbackText: c.fallbackText, fallbackError: message, done: true });
         return { ...c, fallbackStreaming: false, fallbackError: message };
       });
     });
@@ -248,8 +197,8 @@ export default function Workbench() {
       activeKey.current = key;
       const hit = cache.current.get(key);
 
-      // 快取命中（兩段都已結束）→ 秒回，不再打 Gemini。
-      if (hit && hit.grammarDone && hit.defineDone) {
+      // 快取命中 → 秒回，不再打 Gemini。
+      if (hit && hit.done) {
         setCard({
           word,
           anchor,
@@ -259,20 +208,18 @@ export default function Workbench() {
           fallbackText: hit.fallbackText,
           fallbackStreaming: false,
           fallbackError: hit.fallbackError,
-          grammar: hit.grammar,
-          grammarStreaming: false,
-          grammarError: hit.grammarError,
         });
         return;
       }
 
-      // 未命中：開新查詢。先記字典結果到快取，Gemini 兩段完成時再補。
+      // 未命中。命中字典：本地、不打 Gemini。查無：發單一 AI 字義請求。
       const miss = !entry;
       cache.current.set(key, {
-        ...newCacheEntry(),
         dictEntry: entry,
         dictMiss: miss,
-        defineDone: !miss, // 非 miss 無 define 串流
+        fallbackText: "",
+        fallbackError: null,
+        done: !miss, // 命中字典即完成；查無待 AI 字義結束
       });
       setCard({
         word,
@@ -283,20 +230,12 @@ export default function Workbench() {
         fallbackText: "",
         fallbackStreaming: miss,
         fallbackError: null,
-        grammar: "",
-        grammarStreaming: true,
-        grammarError: null,
       });
-      // 查無 → 上段 Gemini 短釋義補充。
       if (miss) {
         api.geminiDefine(word, sentence, targetLang).then((seq) => {
           defSeq.current = seq;
         });
       }
-      // 下段文法：串流事件用後端回傳的真實 seq 過濾（IPC 比首 token 快）。
-      api.geminiExplain(word, sentence, targetLang).then((seq) => {
-        llmSeq.current = seq;
-      });
     });
   };
 
@@ -362,13 +301,7 @@ export default function Workbench() {
 
       <footer className="wb-status">{status}</footer>
 
-      {card && (
-        <DictionaryCard
-          card={card}
-          targetLang={targetLang}
-          onClose={() => setCard(null)}
-        />
-      )}
+      {card && <DictionaryCard card={card} onClose={() => setCard(null)} />}
     </div>
   );
 }

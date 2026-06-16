@@ -5,18 +5,14 @@ import "./DictionaryCard.css";
 export interface DictCardState {
   word: string;
   anchor: { x: number; y: number };
-  // 上段：ECDICT 真字典
+  // ECDICT 真字典命中
   dictEntry: DictionaryEntry | null;
   dictLoading: boolean;
-  // 上段 fallback：ECDICT 查無 → Gemini 短釋義（標明 LLM）
+  // ECDICT 查無 → 單一 AI 字義（明確標示 AI，非字典）
   dictMiss: boolean;
   fallbackText: string;
   fallbackStreaming: boolean;
   fallbackError: string | null;
-  // 下段：Gemini 文法/語境
-  grammar: string;
-  grammarStreaming: boolean;
-  grammarError: string | null;
 }
 
 const CARD_WIDTH = 320;
@@ -27,7 +23,6 @@ export default function DictionaryCard({
   onClose,
 }: {
   card: DictCardState;
-  targetLang: string;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -45,7 +40,7 @@ export default function DictionaryCard({
     if (top + h > window.innerHeight - 8) top = card.anchor.y - h - GAP;
     if (top < 8) top = 8;
     setPos({ left, top });
-  }, [card.anchor, card.dictEntry, card.grammar]);
+  }, [card.anchor, card.dictEntry, card.fallbackText]);
 
   return (
     <div
@@ -54,7 +49,7 @@ export default function DictionaryCard({
       style={{ left: pos.left, top: pos.top, width: CARD_WIDTH }}
       onClick={(e) => e.stopPropagation()}
     >
-      {/* 第一段：真字典（ECDICT 英漢，事實性、非 LLM）。查無時退回 Gemini 短釋義（標明 LLM）。 */}
+      {/* 字典卡只剩字典：ECDICT 命中=真字典；查無=單一 AI 字義（明確標示 AI）。 */}
       <section className="dict-section">
         <div className="dict-head">
           <span className="dict-word">{card.dictEntry?.word ?? card.word}</span>
@@ -80,7 +75,8 @@ export default function DictionaryCard({
         ) : card.dictMiss ? (
           <div className="dict-fallback">
             <div className="llm-label">
-              字典查無 · <span className="llm-provider">Gemini 補充</span>
+              AI 字義 · <span className="llm-provider">Gemini</span>
+              <span className="ai-note">（字典未收錄，AI 推測）</span>
             </div>
             {card.fallbackError ? (
               <p className="dict-muted">{card.fallbackError}</p>
@@ -92,24 +88,7 @@ export default function DictionaryCard({
             )}
           </div>
         ) : (
-          <p className="dict-muted">字典查無此字</p>
-        )}
-      </section>
-
-      <div className="dict-divider" />
-
-      {/* 第二段：Gemini 文法 / 語境（LLM，標明來源） */}
-      <section className="dict-section">
-        <div className="llm-label">
-          文法 / 語境 · <span className="llm-provider">Gemini</span>
-        </div>
-        {card.grammarError ? (
-          <p className="dict-muted">{card.grammarError}</p>
-        ) : (
-          <p className="llm-text">
-            {card.grammar}
-            {card.grammarStreaming && <span className="brush-cursor" aria-label="生成中" />}
-          </p>
+          <p className="dict-muted">英漢字典未收錄</p>
         )}
       </section>
 

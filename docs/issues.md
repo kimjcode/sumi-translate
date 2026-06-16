@@ -72,3 +72,9 @@
 - **根因**：Glance 是 non-activating panel、`canBecomeKeyWindow=false`，永遠拿不到鍵盤焦點，前端收不到 keydown（同 Esc 的處境）。當時也根本沒有任何 ⌘↩ handler。
 - **修法**：跟 Esc 一樣在全域 event tap 攔截——`KEYCODE_RETURN` + ⌘ flag + Glance 顯示中才觸發，不註冊系統 global-shortcut（只在浮窗顯示時生效，不影響別處的 ⌘↩）。後端在顯示 Result 時記下可展開內容供 tap 取用。
 - **狀態**：Fixed
+
+### 11. 字典卡查無時同字發兩個 Gemini 請求 → 503／變慢／內容自相矛盾
+- **症狀**：點 ECDICT 查無的字，字典卡上段（AI 字義）與下段（文法/語境）各打一次 Gemini，常見 503、變慢，且上下兩段對同一字說法不一致。
+- **根因**：原設計「上段字典 + 下段逐字 Gemini 語意」，查無時上段 fallback 與下段語意是兩個獨立 Gemini 請求。
+- **修法**：移除下段逐字 Gemini 整段，字典卡只留字典；查無只發單一 AI 字義請求，並對 503/429/網路錯誤短退避重試 ≤2 次（尚未串出 token 時）。
+- **狀態**：Fixed

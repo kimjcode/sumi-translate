@@ -1,4 +1,4 @@
-//! Workbench 服務層：展開、重翻（沿用過濾層 + MT）、字典查詢、Gemini 文法串流。
+//! Workbench 服務層：展開、重翻（沿用過濾層 + MT）、字典查詢（ECDICT + 查無時單一 AI 字義）。
 //! 紅線：不 log 原文/剪貼簿內容；機密內容不送出；key 只在 Keychain。
 
 use std::path::PathBuf;
@@ -12,18 +12,18 @@ use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::monitor::filter;
-use crate::providers::{self, dictionary::DictLookup};
+use crate::providers::{self, dictionary::DictLookup, ProviderError};
 use crate::settings::SettingsState;
 use crate::windows::{glance, workbench as wb_window};
 
 pub const INPUT_EVENT: &str = "workbench://input";
-pub const LLM_TOKEN_EVENT: &str = "workbench://llm-token";
-pub const LLM_DONE_EVENT: &str = "workbench://llm-done";
-pub const LLM_ERROR_EVENT: &str = "workbench://llm-error";
-// 上段字典查無 → Gemini 短釋義補充（與下段文法分開的事件通道）。
+// 字典查無 → 單一 AI 字義串流（字典卡只剩這一條 Gemini 路徑）。
 pub const DEF_TOKEN_EVENT: &str = "workbench://def-token";
 pub const DEF_DONE_EVENT: &str = "workbench://def-done";
 pub const DEF_ERROR_EVENT: &str = "workbench://def-error";
+
+/// AI 字義 fallback 的 503/429/網路錯誤重試次數（短退避）。
+const DEF_MAX_RETRIES: usize = 2;
 
 #[derive(Clone, Serialize)]
 pub struct WorkbenchInput {
@@ -34,7 +34,6 @@ pub struct WorkbenchInput {
 
 pub struct WorkbenchState {
     input: Mutex<Option<WorkbenchInput>>,
-    llm_seq: AtomicU64,
     def_seq: AtomicU64,
     dict_client: reqwest::Client,
     llm_client: reqwest::Client,
@@ -46,7 +45,6 @@ impl WorkbenchState {
     pub fn new() -> Self {
         Self {
             input: Mutex::new(None),
-            llm_seq: AtomicU64::new(0),
             def_seq: AtomicU64::new(0),
             dict_client: providers::http_client(),
             // 串流不能套整體 timeout（會在串到一半時被切），只留 connect timeout。
@@ -210,42 +208,34 @@ pub fn dictionary_lookup(app: AppHandle, word: String) -> DictLookup {
     providers::dictionary::lookup(guard.as_ref().unwrap(), &word)
 }
 
-/// 兩條 Gemini 串流通道：下段文法 / 上段字典查無補充。
-#[derive(Clone, Copy)]
-enum Channel {
-    Grammar,
-    Define,
+/// 503/429/網路錯誤可重試（且必須是「還沒串出任何 token」才安全重試）。
+fn is_retryable(e: &ProviderError) -> bool {
+    matches!(
+        e,
+        ProviderError::Network(_) | ProviderError::Api { status: 503 | 429, .. }
+    )
 }
 
-impl Channel {
-    fn events(self) -> (&'static str, &'static str, &'static str) {
-        match self {
-            Channel::Grammar => (LLM_TOKEN_EVENT, LLM_DONE_EVENT, LLM_ERROR_EVENT),
-            Channel::Define => (DEF_TOKEN_EVENT, DEF_DONE_EVENT, DEF_ERROR_EVENT),
-        }
-    }
+/// 在 blocking 執行緒池上短退避，不卡 async worker（避免引入 tokio::time 這個依賴）。
+async fn backoff(attempt: usize) {
+    let ms = 400u64 * (attempt as u64); // 400ms, 800ms…
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        std::thread::sleep(Duration::from_millis(ms));
+    })
+    .await;
 }
 
-fn current_seq(wb: &WorkbenchState, channel: Channel) -> u64 {
-    match channel {
-        Channel::Grammar => wb.llm_seq.load(Ordering::SeqCst),
-        Channel::Define => wb.def_seq.load(Ordering::SeqCst),
-    }
-}
-
-/// 共用：起一條 Gemini 串流，token 經對應事件通道串給前端；回傳 request id（供取消比對）。
-fn run_gemini_stream(app: AppHandle, prompt: String, channel: Channel) -> u64 {
+/// 字典查無 → 單一 AI 字義串流（字典卡唯一的 Gemini 路徑）。token 經 `workbench://def-*`。
+/// 503/429/網路錯誤會自動短退避重試（≤2 次，且僅在尚未串出 token 時），仍失敗才回友善訊息。
+#[tauri::command]
+pub fn gemini_define(app: AppHandle, word: String, sentence: String, target_lang: String) -> u64 {
     let state = app.state::<WorkbenchState>();
-    let seq = match channel {
-        Channel::Grammar => state.llm_seq.fetch_add(1, Ordering::SeqCst) + 1,
-        Channel::Define => state.def_seq.fetch_add(1, Ordering::SeqCst) + 1,
-    };
-    let (tok_event, done_event, err_event) = channel.events();
+    let seq = state.def_seq.fetch_add(1, Ordering::SeqCst) + 1;
 
     let Some(api_key) = app.state::<SettingsState>().llm_api_key() else {
         let _ = app.emit_to(
             wb_window::WORKBENCH_LABEL,
-            err_event,
+            DEF_ERROR_EVENT,
             LlmEvent::Error {
                 seq,
                 message: "尚未設定 Gemini API key — 到設定視窗貼上即可".into(),
@@ -255,42 +245,55 @@ fn run_gemini_stream(app: AppHandle, prompt: String, channel: Channel) -> u64 {
     };
 
     let client = state.llm_client.clone();
+    let prompt = build_define_prompt(&word, &sentence, &target_lang);
     let app2 = app.clone();
 
     tauri::async_runtime::spawn(async move {
-        let result = providers::llm::stream_generate(&client, &api_key, &prompt, |delta| {
-            // 被新的查詢取代就停止這條串流。
-            if current_seq(&app2.state::<WorkbenchState>(), channel) != seq {
-                return false;
-            }
-            let _ = app2.emit_to(
-                wb_window::WORKBENCH_LABEL,
-                tok_event,
-                LlmEvent::Token {
-                    seq,
-                    delta: delta.to_string(),
-                },
-            );
-            true
-        })
-        .await;
+        let mut attempt = 0;
+        let result = loop {
+            let mut emitted = false;
+            let r = providers::llm::stream_generate(&client, &api_key, &prompt, |delta| {
+                emitted = true;
+                if app2.state::<WorkbenchState>().def_seq.load(Ordering::SeqCst) != seq {
+                    return false; // 已被新查詢取代 → 停止
+                }
+                let _ = app2.emit_to(
+                    wb_window::WORKBENCH_LABEL,
+                    DEF_TOKEN_EVENT,
+                    LlmEvent::Token { seq, delta: delta.to_string() },
+                );
+                true
+            })
+            .await;
 
-        if current_seq(&app2.state::<WorkbenchState>(), channel) != seq {
+            match &r {
+                // 只在「尚未串出 token」時重試，避免重複輸出。
+                Err(e) if !emitted && attempt < DEF_MAX_RETRIES && is_retryable(e) => {
+                    attempt += 1;
+                    log::warn!("AI define retry {attempt} (retryable error)");
+                    backoff(attempt).await;
+                    continue;
+                }
+                _ => break r,
+            }
+        };
+
+        if app2.state::<WorkbenchState>().def_seq.load(Ordering::SeqCst) != seq {
             return; // 已被取代，不發 done/error
         }
         match result {
             Ok(()) => {
-                let _ = app2.emit_to(wb_window::WORKBENCH_LABEL, done_event, LlmEvent::Done { seq });
+                let _ = app2.emit_to(wb_window::WORKBENCH_LABEL, DEF_DONE_EVENT, LlmEvent::Done { seq });
             }
             Err(e) => {
-                // 診斷：API 錯誤訊息（如 404 列出可用 model），非使用者內容。
-                log::warn!("gemini stream failed: {e:?}");
+                // 診斷：API 錯誤訊息（非使用者內容）；給前端的是友善繁中訊息，不露原始英文。
+                log::warn!("AI define failed: {e:?}");
                 let _ = app2.emit_to(
                     wb_window::WORKBENCH_LABEL,
-                    err_event,
+                    DEF_ERROR_EVENT,
                     LlmEvent::Error {
                         seq,
-                        message: e.user_message_named("Gemini"),
+                        message: e.user_message_named("AI 字義"),
                     },
                 );
             }
@@ -298,20 +301,6 @@ fn run_gemini_stream(app: AppHandle, prompt: String, channel: Channel) -> u64 {
     });
 
     seq
-}
-
-/// 點字 → Gemini 文法/語境（下段，LLM，真串流）。token 經 `workbench://llm-*`。
-#[tauri::command]
-pub fn gemini_explain(app: AppHandle, word: String, sentence: String, target_lang: String) -> u64 {
-    let prompt = build_explain_prompt(&word, &sentence, &target_lang);
-    run_gemini_stream(app, prompt, Channel::Grammar)
-}
-
-/// 字典查無 → Gemini 短中文釋義補充（上段，標明是 LLM）。token 經 `workbench://def-*`。
-#[tauri::command]
-pub fn gemini_define(app: AppHandle, word: String, sentence: String, target_lang: String) -> u64 {
-    let prompt = build_define_prompt(&word, &sentence, &target_lang);
-    run_gemini_stream(app, prompt, Channel::Define)
 }
 
 fn lang_name(code: &str) -> &str {
@@ -325,20 +314,7 @@ fn lang_name(code: &str) -> &str {
     }
 }
 
-fn build_explain_prompt(word: &str, sentence: &str, target_lang: &str) -> String {
-    let lang = lang_name(target_lang);
-    format!(
-        "你是英文教學助理。請用{lang}針對句子中的指定單字，簡潔說明：\n\
-         1. 它在這個句子裡的詞性與用法\n\
-         2. 語境／語感（這裡為什麼用它、有什麼細微差別）\n\
-         3. 一個更自然或更精確的改寫建議（如果有；沒有就說目前已恰當）\n\n\
-         句子：{sentence}\n\
-         指定單字：{word}\n\n\
-         用簡短分點，聚焦文法與語境，不要重複字典定義。"
-    )
-}
-
-/// 字典查無時的補充釋義 prompt：要求一行字典式釋義（含詞性），台灣用語。
+/// 字典查無時的 AI 字義 prompt：要求一行字典式釋義（含詞性），台灣用語。
 fn build_define_prompt(word: &str, sentence: &str, target_lang: &str) -> String {
     let lang = lang_name(target_lang);
     format!(

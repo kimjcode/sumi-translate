@@ -54,10 +54,7 @@ export interface DictLookup {
 }
 
 export const WORKBENCH_INPUT_EVENT = "workbench://input";
-export const LLM_TOKEN_EVENT = "workbench://llm-token";
-export const LLM_DONE_EVENT = "workbench://llm-done";
-export const LLM_ERROR_EVENT = "workbench://llm-error";
-// 上段字典查無 → Gemini 短釋義補充（與下段文法分開的事件通道）。
+// 字典查無 → 單一 AI 字義串流（字典卡唯一的 Gemini 路徑）。
 export const DEF_TOKEN_EVENT = "workbench://def-token";
 export const DEF_DONE_EVENT = "workbench://def-done";
 export const DEF_ERROR_EVENT = "workbench://def-error";
@@ -105,8 +102,6 @@ export const api = {
   closeWorkbench: () => invoke<void>("close_workbench"),
   workbenchTranslate: (text: string) => invoke<WbTranslation>("workbench_translate", { text }),
   dictionaryLookup: (word: string) => invoke<DictLookup>("dictionary_lookup", { word }),
-  geminiExplain: (word: string, sentence: string, targetLang: string) =>
-    invoke<number>("gemini_explain", { word, sentence, targetLang }),
   geminiDefine: (word: string, sentence: string, targetLang: string) =>
     invoke<number>("gemini_define", { word, sentence, targetLang }),
 };
