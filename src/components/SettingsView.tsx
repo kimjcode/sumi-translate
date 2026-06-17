@@ -4,23 +4,39 @@ import "./SettingsView.css";
 
 export default function SettingsView() {
   const [trusted, setTrusted] = useState<boolean | null>(null);
+  const [checking, setChecking] = useState(false);
 
-  // 輪詢權限狀態：授權後自動切到設定畫面，不需重啟。
+  // 立即重查一次（手動按鈕 / 回到視窗時用）。回傳目前狀態。
+  const recheck = useCallback(async () => {
+    setChecking(true);
+    const ok = await api.accessibilityStatus();
+    setTrusted(ok);
+    setChecking(false);
+    return ok;
+  }, []);
+
+  // 輪詢權限狀態：授權後自動切到設定畫面，不需重啟。回到視窗時也立即重查
+  // （從系統設定切回 Sumi 即偵測，毋需等輪詢）。
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const check = async () => {
+    const poll = async () => {
       const ok = await api.accessibilityStatus();
       if (cancelled) return;
       setTrusted(ok);
-      if (!ok) timer = setTimeout(check, 1000);
+      if (!ok) timer = setTimeout(poll, 1000);
     };
-    check();
+    poll();
+    const onFocus = () => {
+      if (!cancelled) recheck();
+    };
+    window.addEventListener("focus", onFocus);
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
+      window.removeEventListener("focus", onFocus);
     };
-  }, []);
+  }, [recheck]);
 
   return (
     <main className="settings-root">
@@ -28,13 +44,29 @@ export default function SettingsView() {
         <span className="seal" aria-hidden />
         <span className="wordmark">Sumi</span>
       </header>
-      {trusted === null ? null : trusted ? <SettingsForm /> : <Onboarding />}
+      {trusted === null ? null : trusted ? (
+        <SettingsForm />
+      ) : (
+        <Onboarding recheck={recheck} checking={checking} />
+      )}
     </main>
   );
 }
 
-function Onboarding() {
+function Onboarding({
+  recheck,
+  checking,
+}: {
+  recheck: () => Promise<boolean>;
+  checking: boolean;
+}) {
   const [requested, setRequested] = useState(false);
+  const [stillBlocked, setStillBlocked] = useState(false);
+
+  const onRecheck = async () => {
+    const ok = await recheck();
+    if (!ok) setStillBlocked(true); // 還是沒過 → 攤開疑難排解
+  };
 
   return (
     <section className="onboarding">
@@ -60,14 +92,34 @@ function Onboarding() {
       ) : (
         <>
           <p className="onboarding-followup">
-            在系統跳出的視窗中允許 Sumi，或手動到設定裡開啟。授權完成後這個畫面會自動更新；若
-            10 秒內沒反應，重新啟動 Sumi 一次。
+            在系統跳出的視窗中允許 Sumi，或到設定裡開啟。回到 Sumi 會自動偵測；沒反應就按「重新檢查」。
           </p>
-          <button className="secondary" onClick={() => api.openAccessibilitySettings()}>
-            打開「系統設定 → 輔助使用」
-          </button>
+          <div className="onboarding-actions">
+            <button className="secondary" onClick={() => api.openAccessibilitySettings()}>
+              打開「系統設定 → 輔助使用」
+            </button>
+            <button className="secondary" onClick={onRecheck} disabled={checking}>
+              {checking ? "檢查中…" : "重新檢查"}
+            </button>
+          </div>
         </>
       )}
+
+      <details className="onboarding-trouble" open={stillBlocked}>
+        <summary>已經授權了，卻還停在這頁？</summary>
+        <p>
+          多半是因為這版 Sumi 還沒正式簽章，每次重新打包身分會變，系統設定裡那條「Sumi」可能綁到舊版本。
+          <b>切換開關沒用</b>，要整條移除再重授：
+        </p>
+        <ol>
+          <li>系統設定 → 隱私權與安全性 → 輔助使用</li>
+          <li>
+            選到「Sumi」→ 按 <b>減號（−）整條移除</b>（不是只關開關）
+          </li>
+          <li>完全結束 Sumi（⌘Q）再重新打開 → 按「啟用權限」重新授權</li>
+          <li>回到這頁按「重新檢查」即可</li>
+        </ol>
+      </details>
     </section>
   );
 }

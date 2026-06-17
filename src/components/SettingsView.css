@@ -48,6 +48,36 @@
   color: var(--ink-2);
 }
 
+.onboarding-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.onboarding-trouble {
+  margin-top: 8px;
+  border-top: 0.5px solid var(--hairline);
+  padding-top: 12px;
+}
+
+.onboarding-trouble summary {
+  font-size: 13px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.onboarding-trouble p,
+.onboarding-trouble li {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+.onboarding-trouble ol {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
 /* 表單 */
 .settings-form {
   display: flex;
