@@ -13,7 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["macos-private-api"] }
+tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 arboard = "3"
@@ -24,6 +24,6 @@ core-foundation = "0.10.1"
 reqwest = { version = "0.13.4", features = ["charset", "http2", "json", "native-tls"], default-features = false }
 objc2 = "0.6.4"
 objc2-foundation = { version = "0.3.2", features = ["NSString", "NSArray", "NSURL", "NSGeometry", "NSDictionary"] }
-objc2-app-kit = { version = "0.3.2", features = ["NSPanel", "NSWindow", "NSResponder", "NSPasteboard", "NSScreen", "NSGraphics"] }
+objc2-app-kit = { version = "0.3.2", features = ["NSPanel", "NSWindow", "NSResponder", "NSPasteboard", "NSScreen", "NSGraphics", "NSApplication", "NSRunningApplication"] }
 keyring = { version = "3", features = ["apple-native"] }
 rusqlite = { version = "0.40", features = ["bundled"] }

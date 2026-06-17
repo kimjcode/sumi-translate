@@ -28,10 +28,11 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// 顯示 Workbench 並拿到鍵盤焦點（一般視窗，乾淨 activate）。
+/// 顯示 Workbench 並拿到鍵盤焦點。accessory 模式下視窗要能編輯就得先 activate App。
 pub fn show(app: &AppHandle) {
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
+        super::activate_app(); // accessory 下，沒 activate 視窗拿不到鍵盤焦點
         if let Some(window) = app2.get_webview_window(WORKBENCH_LABEL) {
             let _ = window.show();
             let _ = window.unminimize();

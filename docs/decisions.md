@@ -2,6 +2,19 @@
 
 > 已拍板的產品/技術決策。改這裡之前先取得共識；PRD/CLAUDE.md 沒寫清楚的，以本檔為準。
 
+## D9 — 選單列常駐 + 隱藏 Dock（accessory）（2026-06-17）
+
+把 Sumi 變成 macOS 選單列常駐程式：平常隱形、無 Dock 圖示、無主視窗，右上角選單列一個 icon。這是 D4 補充裡延後的「accessory／選單列終態」，現在連同 tray 一起做。
+
+- **accessory 模式**：啟動時 `NSApplicationActivationPolicy::Accessory`——不進 Dock、不進 ⌘Tab。
+- **focus 處理（D4/#4 教訓：先隔離再驗）**：accessory 下視窗預設拿不到鍵盤焦點，所以：
+  - **Glance**：維持 `orderFrontRegardless`、**不** activate App → non-activating、不搶前景焦點（accessory 反而更乾淨）。
+  - **Workbench / 設定視窗**：show 前先 `activateIgnoringOtherApps(true)` → 才拿得到鍵盤焦點可編輯。
+  - 結論：兩條 focus 行為靠「Glance 不 activate、其餘 activate」區分，未改視窗架構。
+- **tray 選單**（Tauri 內建 `tray-icon` + `image-png` feature，非新 crate）：`設定…`（開設定視窗）／停用的版本列 `Sumi vX.Y.Z`（兼關於）／`結束 Sumi`。icon 用單色 template image（`icon_as_template(true)`），隨深/淺色選單列自動配色。
+- **主視窗（設定）改 `visible:false`**：平常不彈。首次啟動若**未取得輔助使用權限**才自動顯示做 onboarding；已授權則維持隱形，靠選單列「設定」叫出。沿用「關閉=隱藏不銷毀」+ Dock reopen 保險。
+- tray icon 原始檔 `src-tauri/icons/tray.png`（單色 template，44px）。
+
 ## D8 — ⌘CC 的完整行為樹：有新複製→Glance / 無新複製→空白 Workbench（2026-06-17）
 
 讓「沒有複製任何新東西時按 ⌘CC」有明確用途：開一個全空 Workbench 自己打字翻譯（順便消除「空白按 ⌘CC 帶出上次剪貼簿內容」的困惑）。
