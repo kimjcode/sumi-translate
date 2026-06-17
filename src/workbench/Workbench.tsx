@@ -56,6 +56,8 @@ export default function Workbench() {
     defSeq.current = 0; // 作廢上一次的串流
     cache.current.clear(); // 關閉再開 → 快取清空、重新查
     activeKey.current = null;
+    // 游標就緒：空白 ⌘CC 開的空 Workbench 要能直接打字。
+    requestAnimationFrame(() => originalRef.current?.focus());
   };
 
   // 把 AI 字義完成的內容寫回 session 快取（def done/error 時呼叫）。

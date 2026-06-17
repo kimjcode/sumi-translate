@@ -127,6 +127,18 @@ pub fn expand_from_glance(app: &AppHandle) {
     }
 }
 
+/// 空白 ⌘CC（這次沒有新複製）→ 開全空 Workbench 讓使用者自己打字。
+/// 原文/譯文皆空，不帶任何上次剪貼簿內容（這正是要消除的困惑）。
+pub fn open_blank(app: &AppHandle) {
+    let s = app.state::<SettingsState>().snapshot();
+    // 目標語言先給設定值；配對模式會在使用者打字、首次翻譯後反映解析方向。
+    let target = match s.lang_mode {
+        crate::router::LangMode::Fixed => s.target_lang,
+        crate::router::LangMode::Pairing => s.my_lang,
+    };
+    open_with(app, String::new(), String::new(), target);
+}
+
 /// Workbench 前端掛載時讀取帶入的原文 / 譯文。
 #[tauri::command]
 pub fn get_workbench_input(state: tauri::State<'_, WorkbenchState>) -> Option<WorkbenchInput> {

@@ -95,14 +95,9 @@ fn routing_signature(settings: &Settings) -> String {
     }
 }
 
-/// 雙擊觸發入口。可從任意執行緒（event tap）呼叫；實際處理排到主執行緒
-/// （NSPasteboard / 視窗操作都要在主執行緒）。
-pub fn trigger(app: &AppHandle) {
-    let app2 = app.clone();
-    let _ = app.run_on_main_thread(move || handle_on_main(app2));
-}
-
-fn handle_on_main(app: AppHandle) {
+/// 「有新複製 → 翻譯」的主執行緒處理（讀剪貼簿 → 過濾 → Glance）。
+/// 由 monitor 的雙擊分流在主執行緒呼叫（NSPasteboard / 視窗操作都要在主執行緒）。
+pub(crate) fn handle_on_main(app: AppHandle) {
     if pasteboard::has_file_url() {
         log::info!("clipboard contains file URL(s), ignoring trigger");
         return;

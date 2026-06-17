@@ -9,7 +9,7 @@ pub mod double_press;
 pub mod filter;
 pub mod pasteboard;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -24,7 +24,7 @@ use tauri::{AppHandle, Manager};
 use crate::pipeline;
 use crate::settings::SettingsState;
 use crate::windows::glance;
-use double_press::DoublePressDetector;
+use double_press::{DoublePressDetector, Press};
 
 /// kVK_ANSI_C：實體 C 鍵位的 keycode（與輸入法/語言無關）。
 const KEYCODE_C: i64 = 8;
@@ -51,8 +51,10 @@ pub fn spawn(app: AppHandle) {
 }
 
 fn run_listener(app: AppHandle) {
-    // callback 是 Fn（非 FnMut），且只會在本執行緒的 run loop 被呼叫 → RefCell 即可。
+    // callback 是 Fn（非 FnMut），且只會在本執行緒的 run loop 被呼叫 → RefCell/Cell 即可。
     let detector = RefCell::new(DoublePressDetector::new());
+    // 第一次 ⌘C 按下時的 changeCount 基準（複製發生前的值）。
+    let baseline_cc = Cell::new(0isize);
 
     let result = CGEventTap::with_enabled(
         CGEventTapLocation::Session,
@@ -68,7 +70,7 @@ fn run_listener(app: AppHandle) {
         ],
         |_proxy, etype, event| {
             match etype {
-                CGEventType::KeyDown => on_key_down(&app, &detector, event),
+                CGEventType::KeyDown => on_key_down(&app, &detector, &baseline_cc, event),
                 CGEventType::KeyUp => {
                     if keycode(event) == KEYCODE_C {
                         detector.borrow_mut().on_release();
@@ -100,7 +102,12 @@ fn keycode(event: &CGEvent) -> i64 {
     event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE)
 }
 
-fn on_key_down(app: &AppHandle, detector: &RefCell<DoublePressDetector>, event: &CGEvent) {
+fn on_key_down(
+    app: &AppHandle,
+    detector: &RefCell<DoublePressDetector>,
+    baseline_cc: &Cell<isize>,
+    event: &CGEvent,
+) {
     let code = keycode(event);
     if code == KEYCODE_C {
         let cmd_held = event.get_flags().contains(CGEventFlags::CGEventFlagCommand);
@@ -113,12 +120,18 @@ fn on_key_down(app: &AppHandle, detector: &RefCell<DoublePressDetector>, event: 
             .state::<SettingsState>()
             .double_press_ms
             .load(Ordering::Relaxed);
-        if detector
+        match detector
             .borrow_mut()
             .on_press(Instant::now(), Duration::from_millis(window_ms))
         {
-            log::info!("double Cmd+C detected");
-            pipeline::trigger(app);
+            // 第一次按下：記下複製發生「前」的 changeCount 當基準。
+            Press::Started => baseline_cc.set(pasteboard::change_count()),
+            // 雙擊成立：交給主執行緒依「這次有沒有新複製」分流。
+            Press::Fired => {
+                log::info!("double Cmd+C detected");
+                dispatch_double_press(app, baseline_cc.get());
+            }
+            Press::Ignored => {}
         }
     } else if code == KEYCODE_ESCAPE && glance::is_visible(app) {
         glance::hide(app);
@@ -130,6 +143,21 @@ fn on_key_down(app: &AppHandle, detector: &RefCell<DoublePressDetector>, event: 
         log::info!("Cmd+Return on Glance → expand to Workbench");
         crate::workbench::expand_from_glance(app);
     }
+}
+
+/// 雙擊成立後在主執行緒分流：有新複製 → 翻譯（Glance）；無新複製 → 開空白 Workbench。
+/// 在主執行緒讀 changeCount（此時第一次 ⌘C 的複製已落地，比 tap 當下更可靠）。
+fn dispatch_double_press(app: &AppHandle, baseline: isize) {
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if pasteboard::change_count() > baseline {
+            log::info!("→ new copy, translate (Glance)");
+            pipeline::handle_on_main(app2);
+        } else {
+            log::info!("→ no new copy, open blank Workbench");
+            crate::workbench::open_blank(&app2);
+        }
+    });
 }
 
 fn on_mouse_down(app: &AppHandle, event: &CGEvent) {

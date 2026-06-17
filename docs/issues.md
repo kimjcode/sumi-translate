@@ -78,3 +78,9 @@
 - **根因**：原設計「上段字典 + 下段逐字 Gemini 語意」，查無時上段 fallback 與下段語意是兩個獨立 Gemini 請求。
 - **修法**：移除下段逐字 Gemini 整段，字典卡只留字典；查無只發單一 AI 字義請求，並對 503/429/網路錯誤短退避重試 ≤2 次（尚未串出 token 時）。
 - **狀態**：Fixed
+
+### 12. 設定視窗關掉後叫不回來（正式版）
+- **症狀**：build 出來的正式版，第一次開設定頁、關掉後，再點 App icon 叫不出設定。
+- **根因**：兩個都中——(a) main（設定）視窗沒有 close handler，Tauri 預設關閉鈕**整個銷毀**視窗（同 #5）；(b) 點 Dock icon（applicationShouldHandleReopen）沒綁「重新顯示設定」。銷毀後又沒有重開入口 → 叫不回來。
+- **修法**：(a) main 視窗 `CloseRequested` → `prevent_close()` + 隱藏（關閉=隱藏不銷毀）；(b) 在 run loop 處理 `RunEvent::Reopen` → 顯示並聚焦 main 視窗。之後做選單列時也能從那裡叫出。
+- **狀態**：Fixed

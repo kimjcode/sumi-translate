@@ -78,9 +78,28 @@ pub fn run() {
             app.manage(workbench::WorkbenchState::new());
             windows::glance::init(&handle)?;
             windows::workbench::init(&handle)?;
+            // 設定（main）視窗關閉 → 隱藏而非銷毀，確保之後（Dock icon / 選單列）能重新叫出。
+            if let Some(main) = handle.get_webview_window("main") {
+                let w = main.clone();
+                main.on_window_event(move |e| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = e {
+                        api.prevent_close();
+                        let _ = w.hide();
+                    }
+                });
+            }
             monitor::spawn(handle);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // 點 Dock icon（applicationShouldHandleReopen）→ 重新顯示設定視窗。
+            if let tauri::RunEvent::Reopen { .. } = event {
+                if let Some(main) = app.get_webview_window("main") {
+                    let _ = main.show();
+                    let _ = main.set_focus();
+                }
+            }
+        });
 }
