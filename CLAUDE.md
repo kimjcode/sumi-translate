@@ -72,10 +72,10 @@ Windows/Linux · OCR/截圖翻譯 · plugin system · 多 agent · 登入/帳號
 
 ## 開發慣例
 - 命名：Rust `snake_case`（idiomatic）；React 元件 `PascalCase`（`GlanceCard.tsx`）；前端工具 `camelCase`。
-- Git：一律開 feature branch，**不直接 push `main`**。
+- Git：功能性改動開 feature branch，驗收後 fast-forward 併入 `master`。**solo 專案，可直接 push `master`、免 PR**（feature branch 仍保留，方便回溯與隔離）。
 - Log：用正式 logger，不用 `println!` / `console.log` 當正式 log。
 - 測試：provider 與純邏輯（語言判斷、機密過濾、雙擊時間窗）寫單元測試；OS 層監聽（CGEventTap）靠**手動整合測試**，不強求單元測試。
-- 每完成一階段，更新 `docs/` 與本檔決策。PRD/本檔沒寫清楚的架構決策，**先問我，不要自己選**。請在 CLAUDE.md 
+- 每完成一階段，更新 `docs/` 與本檔決策。PRD/本檔沒寫清楚的架構決策，**先問我，不要自己選**。
 - 修 bug 時在 docs/issues.md 維護精簡缺陷清單（症狀／根因／修法／狀態四欄）；先寫症狀與懷疑、隔離變因確認根因後再動手，不要寫成冗長 debug 日記。缺陷記 issues.md、設計決策記 decisions.md、未承諾的點子記 backlog.md。
 
 ## 常用指令

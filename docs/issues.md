@@ -88,5 +88,5 @@
 ### 13. 正式版輔助使用權限「開著卻沒用」、卡在 onboarding
 - **症狀**：`npm run tauri build` 的正式版，系統設定裡輔助使用顯示 Sumi 已開，但 App 仍停在授權頁、`AXIsProcessTrusted()` 回 false；切換開關／重啟無效。
 - **根因**：release 是 **ad-hoc 簽章**（`TeamIdentifier not set`、`flags=adhoc,linker-signed`），TCC 對未正式簽章 app 綁 binary 的 **cdhash**；每次重打包 cdhash 變，系統設定那條「Sumi」綁到舊 cdhash，對不上現在的 binary。**只切換開關不會重綁**。
-- **修法（B：未簽章現實的緩解，非根治）**：onboarding 加「重新檢查」鈕 + 回到視窗自動重查 + 疑難排解（教使用者**整條移除（−）再重授**，不是切換開關）。根治需 Apple Developer ID 簽章＋公證（使用者目前無帳號，延後）。
-- **狀態**：Mitigated（根治＝正式簽章，待 Developer ID）
+- **修法（B：未簽章現實的緩解，非根治）**：onboarding 加「重新檢查」鈕 + 回到視窗自動重查 + 疑難排解（教使用者**整條移除（−）再重授**，不是切換開關）。根治需 Apple Developer ID 簽章＋公證（cdhash 不再隨打包變動、授權跨打包穩定保留）；**目前刻意暫不做，理由見 [decisions.md D10](decisions.md)**。
+- **狀態**：Mitigated（根治＝正式簽章；暫緩屬決策，見 D10）
