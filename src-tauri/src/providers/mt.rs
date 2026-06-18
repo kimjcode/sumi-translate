@@ -3,7 +3,7 @@
 
 use serde::Deserialize;
 
-use super::{MtTranslator, Provider, ProviderError, Translation};
+use super::{redact_secrets, MtTranslator, Provider, ProviderError, Translation};
 
 // ── Google ────────────────────────────────────────────────────────────────
 
@@ -56,9 +56,11 @@ impl MtTranslator for GoogleTranslator {
         text: &str,
         target_lang: &str,
     ) -> Result<Translation, ProviderError> {
-        // Google API key 僅含 URL-safe 字元（英數、-、_），可直接放 query string。
+        // 紅線：key 走 header（`X-Goog-Api-Key`，Google Translation v2 支援），URL 永不含 key，
+        // 連線層錯誤的 Display 帶上 URL 時也不會洩漏金鑰。（不放 query string。）
         let resp = client
-            .post(format!("{GOOGLE_ENDPOINT}?key={api_key}"))
+            .post(GOOGLE_ENDPOINT)
+            .header("X-Goog-Api-Key", api_key)
             .json(&serde_json::json!({
                 "q": text,
                 "target": target_lang,
@@ -66,13 +68,13 @@ impl MtTranslator for GoogleTranslator {
             }))
             .send()
             .await
-            .map_err(|e| ProviderError::Network(e.to_string()))?;
+            .map_err(|e| ProviderError::Network(redact_secrets(&e.to_string())))?;
 
         let status = resp.status();
         let body = resp
             .text()
             .await
-            .map_err(|e| ProviderError::Network(e.to_string()))?;
+            .map_err(|e| ProviderError::Network(redact_secrets(&e.to_string())))?;
         if !status.is_success() {
             return Err(api_error(status.as_u16(), &body));
         }
@@ -149,13 +151,13 @@ impl MtTranslator for DeepLTranslator {
             }))
             .send()
             .await
-            .map_err(|e| ProviderError::Network(e.to_string()))?;
+            .map_err(|e| ProviderError::Network(redact_secrets(&e.to_string())))?;
 
         let status = resp.status();
         let body = resp
             .text()
             .await
-            .map_err(|e| ProviderError::Network(e.to_string()))?;
+            .map_err(|e| ProviderError::Network(redact_secrets(&e.to_string())))?;
         if !status.is_success() {
             return Err(api_error(status.as_u16(), &body));
         }

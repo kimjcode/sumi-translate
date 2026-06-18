@@ -14,11 +14,20 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use core_foundation::runloop::CFRunLoop;
+use core_foundation::base::TCFType;
+use core_foundation::mach_port::{CFMachPort, CFMachPortRef};
+use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
     CGEventTapPlacement, CGEventType, CallbackResult, EventField,
 };
+
+// CGEventTapEnable 在 core-graphics 0.25 沒有公開（只有 CGEventTap::enable() 用得到，
+// 但 with_enabled 不把 tap 交給 callback）。直接綁這個公開的 ApplicationServices C 函式，
+// 讓 callback 在系統停用 tap 時就地重新啟用（M1）。不新增任何 crate。
+extern "C" {
+    fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+}
 use tauri::{AppHandle, Manager};
 
 use crate::pipeline;
@@ -55,47 +64,68 @@ fn run_listener(app: AppHandle) {
     let detector = RefCell::new(DoublePressDetector::new());
     // 第一次 ⌘C 按下時的 changeCount 基準（複製發生前的值）。
     let baseline_cc = Cell::new(0isize);
+    // M1：保留 tap 的 mach port，讓 callback 在系統停用 tap 時就地 re-enable。
+    // 建立順序是雞生蛋：callback 先寫好（借用此 cell），tap 建好後才把 port 填進去。
+    let tap_port: RefCell<Option<CFMachPort>> = RefCell::new(None);
 
-    let result = CGEventTap::with_enabled(
-        CGEventTapLocation::Session,
-        CGEventTapPlacement::HeadInsertEventTap,
-        // ListenOnly：被動監聽，絕不攔截/修改事件，不影響正常複製行為。
-        CGEventTapOptions::ListenOnly,
-        vec![
-            CGEventType::KeyDown,
-            CGEventType::KeyUp,
-            CGEventType::LeftMouseDown,
-            CGEventType::RightMouseDown,
-            CGEventType::OtherMouseDown,
-        ],
-        |_proxy, etype, event| {
-            match etype {
-                CGEventType::KeyDown => on_key_down(&app, &detector, &baseline_cc, event),
-                CGEventType::KeyUp => {
-                    if keycode(event) == KEYCODE_C {
-                        detector.borrow_mut().on_release();
-                    }
+    let callback = |_proxy: core_graphics::event::CGEventTapProxy, etype, event: &CGEvent| {
+        match etype {
+            CGEventType::KeyDown => on_key_down(&app, &detector, &baseline_cc, event),
+            CGEventType::KeyUp => {
+                if keycode(event) == KEYCODE_C {
+                    detector.borrow_mut().on_release();
                 }
-                CGEventType::LeftMouseDown
-                | CGEventType::RightMouseDown
-                | CGEventType::OtherMouseDown => on_mouse_down(&app, event),
-                // 系統因 callback 過慢或使用者操作而停用 tap 時會收到這兩種事件；
-                // 先記 log，重新啟用列為待辦。
-                CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
-                    log::warn!("event tap disabled by system ({etype:?})");
-                }
-                _ => {}
             }
-            CallbackResult::Keep
-        },
-        // tap 掛上本執行緒 run loop 後在此阻塞處理事件。
-        || CFRunLoop::run_current(),
-    );
+            CGEventType::LeftMouseDown
+            | CGEventType::RightMouseDown
+            | CGEventType::OtherMouseDown => on_mouse_down(&app, event),
+            // 系統因 callback 過慢或使用者操作而停用 tap 時會收到這兩種事件。
+            // 不重啟就會「雙擊靜默死掉直到重啟 App」(M1)；就地 re-enable。
+            CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
+                log::warn!("event tap disabled by system ({etype:?}); re-enabling");
+                if let Some(port) = tap_port.borrow().as_ref() {
+                    unsafe { CGEventTapEnable(port.as_concrete_TypeRef(), true) };
+                }
+            }
+            _ => {}
+        }
+        CallbackResult::Keep
+    };
 
-    if result.is_err() {
-        // 建 tap 失敗（多半是權限問題）時優雅降級：App 照常活著，只是雙擊不會動。
-        log::error!("failed to create CGEventTap; double Cmd+C trigger disabled");
-    }
+    // 手動建 tap（不用 with_enabled）才能在建好後把 mach port 交給 callback 重啟用。
+    let tap = match unsafe {
+        CGEventTap::new_unchecked(
+            CGEventTapLocation::Session,
+            CGEventTapPlacement::HeadInsertEventTap,
+            // ListenOnly：被動監聽，絕不攔截/修改事件，不影響正常複製行為。
+            CGEventTapOptions::ListenOnly,
+            vec![
+                CGEventType::KeyDown,
+                CGEventType::KeyUp,
+                CGEventType::LeftMouseDown,
+                CGEventType::RightMouseDown,
+                CGEventType::OtherMouseDown,
+            ],
+            callback,
+        )
+    } {
+        Ok(t) => t,
+        Err(()) => {
+            // 建 tap 失敗（多半是權限問題）時優雅降級：App 照常活著，只是雙擊不會動。
+            log::error!("failed to create CGEventTap; double Cmd+C trigger disabled");
+            return;
+        }
+    };
+
+    // tap 建好 → 把 mach port 交給 callback（供 re-enable）→ 掛上本執行緒 run loop → 啟用 → 阻塞處理。
+    *tap_port.borrow_mut() = Some(tap.mach_port().clone());
+    let loop_source = tap
+        .mach_port()
+        .create_runloop_source(0)
+        .expect("failed to create run loop source for event tap");
+    CFRunLoop::get_current().add_source(&loop_source, unsafe { kCFRunLoopCommonModes });
+    tap.enable();
+    CFRunLoop::run_current();
 }
 
 fn keycode(event: &CGEvent) -> i64 {

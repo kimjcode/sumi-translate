@@ -118,3 +118,71 @@ pub fn http_client() -> reqwest::Client {
         .build()
         .expect("failed to build HTTP client")
 }
+
+/// 遮掉錯誤字串中可能夾帶的 API key（紅線縱深防禦）。
+///
+/// reqwest 連線層錯誤的 `Display` 會帶上完整請求 URL；若 key 放在 query string
+/// （`?key=AIza…`），這個字串一旦進 log 就洩漏整把金鑰。Google MT 的 key 已改放 header
+/// （URL 不再含 key），此函式是「未來任何拿 reqwest error 字串去 log」的根因防線：
+/// 在 `ProviderError::Network` 建構時就把 `key=<value>` 一律遮成 `key=REDACTED`。
+pub fn redact_secrets(input: &str) -> String {
+    // ASCII 小寫化後做大小寫無關搜尋；位元組長度不變，索引與原字串對齊。
+    let lower = input.to_ascii_lowercase();
+    let mut out = String::with_capacity(input.len());
+    let mut idx = 0;
+    while idx < input.len() {
+        match lower[idx..].find("key=") {
+            Some(rel) => {
+                let val_start = idx + rel + 4; // 跳過 "key="
+                out.push_str(&input[idx..val_start]);
+                // 吃掉 value：URL-safe key 字元（英數與 - _ . ~）。
+                let mut end = val_start;
+                for (off, c) in input[val_start..].char_indices() {
+                    if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~') {
+                        end = val_start + off + c.len_utf8();
+                    } else {
+                        break;
+                    }
+                }
+                if end > val_start {
+                    out.push_str("REDACTED");
+                }
+                idx = end;
+            }
+            None => {
+                out.push_str(&input[idx..]);
+                break;
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redacts_key_in_reqwest_url_error() {
+        let err = "error sending request for url (https://translation.googleapis.com/language/translate/v2?key=AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY)";
+        let redacted = redact_secrets(err);
+        assert!(!redacted.contains("AIzaSyD"), "key must not survive: {redacted}");
+        assert!(redacted.contains("key=REDACTED"));
+        assert!(redacted.contains("translate/v2")); // 其餘 URL 保留供診斷
+    }
+
+    #[test]
+    fn redacts_multiple_and_is_case_insensitive() {
+        let s = redact_secrets("a?Key=abc123&b=2&key=xyz_789");
+        assert!(!s.contains("abc123") && !s.contains("xyz_789"));
+        assert_eq!(s, "a?Key=REDACTED&b=2&key=REDACTED");
+    }
+
+    #[test]
+    fn leaves_key_free_strings_untouched() {
+        let s = "connection timed out after 10s";
+        assert_eq!(redact_secrets(s), s);
+        // 「key=」後面沒有值（空字串）不亂插 REDACTED。
+        assert_eq!(redact_secrets("key="), "key=");
+    }
+}

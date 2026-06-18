@@ -163,6 +163,9 @@ export default function Workbench() {
             setTranslated("");
             setStatus("");
             break;
+          case "stale":
+            // 已被更新的編輯取代：忽略，不回填（避免舊譯文蓋掉新的）。
+            break;
           case "error":
             setStatus(res.message);
             break;
@@ -192,7 +195,8 @@ export default function Workbench() {
     const word = wordAtCaret(ta.value, ta.selectionStart, ta.selectionEnd);
     if (!word) return;
     const anchor = { x: e.clientX, y: e.clientY }; // 先抓，避免 async 後事件被回收
-    const sentence = ta.value;
+    // 只送「該字所在句」而非整個原文框（H2：降低外送量、符合隱私；後端仍會再過機密過濾）。
+    const sentence = sentenceAtCaret(ta.value, ta.selectionStart);
 
     api.dictionaryLookup(word).then(({ entry, lemma }) => {
       const key = `${lemma}|${targetLang}`; // 鍵 = 還原後原形 + 語言方向
@@ -325,4 +329,17 @@ function wordAtCaret(text: string, start: number, end: number): string | null {
   while (r < text.length && isWordChar(text[r])) r++;
   const word = text.slice(l, r).replace(/^[-']+|[-']+$/g, "");
   return /^[A-Za-z][A-Za-z'-]*$/.test(word) ? word : null;
+}
+
+/// 抓出游標所在的「句子」：向左右掃描到句界（. ! ? 。！？ 換行）為止。
+/// 換行也算邊界，讓夾在多行設定/log 裡的機密那行被獨立成一段，後端機密過濾才能命中。
+function sentenceAtCaret(text: string, pos: number): string {
+  const isBoundary = (c: string) => c === "\n" || /[.!?。！？]/.test(c);
+  let l = pos;
+  let r = pos;
+  while (l > 0 && !isBoundary(text[l - 1])) l--;
+  while (r < text.length && !isBoundary(text[r])) r++;
+  if (r < text.length) r++; // 含句尾標點，語境更完整
+  const sentence = text.slice(l, r).trim();
+  return sentence || text.trim();
 }

@@ -25,6 +25,10 @@ pub const DEF_ERROR_EVENT: &str = "workbench://def-error";
 /// AI 字義 fallback 的 503/429/網路錯誤重試次數（短退避）。
 const DEF_MAX_RETRIES: usize = 2;
 
+/// 串流的「兩次 chunk 之間」閒置上限。不設整體 timeout（避免腰斬長回應），
+/// 但首 token 後若連線 stall，read_timeout 會把它轉成 Network 錯誤，而非永遠卡「串流中」。
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(20);
+
 #[derive(Clone, Serialize)]
 pub struct WorkbenchInput {
     pub original: String,
@@ -35,6 +39,8 @@ pub struct WorkbenchInput {
 pub struct WorkbenchState {
     input: Mutex<Option<WorkbenchInput>>,
     def_seq: AtomicU64,
+    /// 重翻請求序號（M2）：連續編輯時丟棄慢回的舊請求，避免過時譯文蓋掉新的。
+    mt_seq: AtomicU64,
     dict_client: reqwest::Client,
     llm_client: reqwest::Client,
     /// ECDICT SQLite 連線（唯讀），首次查詢時 lazy 開啟。
@@ -46,10 +52,13 @@ impl WorkbenchState {
         Self {
             input: Mutex::new(None),
             def_seq: AtomicU64::new(0),
+            mt_seq: AtomicU64::new(0),
             dict_client: providers::http_client(),
-            // 串流不能套整體 timeout（會在串到一半時被切），只留 connect timeout。
+            // 串流不能套整體 timeout（會在串到一半時被切），只留 connect timeout +
+            // read_timeout（每次讀的閒置上限，讀到資料就重置）→ stall 時轉錯不無限掛住。
             llm_client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(5))
+                .read_timeout(STREAM_IDLE_TIMEOUT)
                 .build()
                 .expect("failed to build LLM HTTP client"),
             ecdict: Mutex::new(None),
@@ -81,6 +90,8 @@ pub enum WbTranslation {
     /// 疑似機密 → 不送出（沿用 P0 過濾層紅線）。
     Secret,
     Empty,
+    /// 已被更新的編輯取代（M2）：前端忽略，不回填，避免慢回的舊譯文蓋掉新的。
+    Stale,
     Error {
         message: String,
     },
@@ -156,15 +167,24 @@ pub async fn workbench_translate(
     app: AppHandle,
     text: String,
 ) -> WbTranslation {
-    match filter::classify(&text) {
+    // M2：每次重翻領一個序號；await 回來後若已非最新就回 Stale，前端丟棄。
+    // 比照 Glance（pipeline 的 request_seq），避免連續編輯時較早送出、較晚回的請求蓋掉新譯文。
+    let seq = app
+        .state::<WorkbenchState>()
+        .mt_seq
+        .fetch_add(1, Ordering::SeqCst)
+        + 1;
+    let result = match filter::classify(&text) {
         filter::Classification::Empty => WbTranslation::Empty,
         filter::Classification::Secret => WbTranslation::Secret,
         // Workbench 是使用者主動編輯，URL/路徑也照翻（仍經機密過濾，紅線不變）。
-        filter::Classification::UrlOrPath => {
-            run_mt(&app, text.trim().to_string(), false).await
-        }
+        filter::Classification::UrlOrPath => run_mt(&app, text.trim().to_string(), false).await,
         filter::Classification::Text { text, truncated } => run_mt(&app, text, truncated).await,
+    };
+    if app.state::<WorkbenchState>().mt_seq.load(Ordering::SeqCst) != seq {
+        return WbTranslation::Stale;
     }
+    result
 }
 
 async fn run_mt(app: &AppHandle, text: String, truncated: bool) -> WbTranslation {
@@ -243,6 +263,21 @@ async fn backoff(attempt: usize) {
 pub fn gemini_define(app: AppHandle, word: String, sentence: String, target_lang: String) -> u64 {
     let state = app.state::<WorkbenchState>();
     let seq = state.def_seq.fetch_add(1, Ordering::SeqCst) + 1;
+
+    // 紅線（H2）：字典 fallback 也是一條送外部 API 的出口，必須過機密過濾。
+    // 命中 Secret（如貼進含 `api_key=…`／私鑰的設定/log）→ 不送 Gemini，回「已略過」。
+    if matches!(filter::classify(&sentence), filter::Classification::Secret) {
+        log::info!("AI define: sentence looks like a secret, blocked from sending");
+        let _ = app.emit_to(
+            wb_window::WORKBENCH_LABEL,
+            DEF_ERROR_EVENT,
+            LlmEvent::Error {
+                seq,
+                message: "已略過可能的機密內容".into(),
+            },
+        );
+        return seq;
+    }
 
     let Some(api_key) = app.state::<SettingsState>().llm_api_key() else {
         let _ = app.emit_to(

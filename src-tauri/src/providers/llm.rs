@@ -3,7 +3,7 @@
 
 use serde::Deserialize;
 
-use super::ProviderError;
+use super::{redact_secrets, ProviderError};
 
 /// 預設模型。集中為常數，日後換版只改這裡。
 pub const GEMINI_MODEL: &str = "gemini-2.5-flash";
@@ -75,7 +75,7 @@ pub async fn stream_generate(
         .json(&body)
         .send()
         .await
-        .map_err(|e| ProviderError::Network(e.to_string()))?;
+        .map_err(|e| ProviderError::Network(redact_secrets(&e.to_string())))?;
 
     let status = resp.status();
     if !status.is_success() {
@@ -96,7 +96,7 @@ pub async fn stream_generate(
         let chunk = resp
             .chunk()
             .await
-            .map_err(|e| ProviderError::Network(e.to_string()))?;
+            .map_err(|e| ProviderError::Network(redact_secrets(&e.to_string())))?;
         let Some(bytes) = chunk else { break };
         buffer.extend_from_slice(&bytes);
 

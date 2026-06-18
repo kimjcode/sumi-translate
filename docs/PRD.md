@@ -1,6 +1,6 @@
 # 產品需求文件 (PRD) — V2
 
-**產品名稱（暫定）：** ClipTranslate AI
+**產品名稱：** Sumi（墨）
 **平台：** macOS（原生工具，第一階段不做 Windows / Linux）
 **版本：** v2（修正內部矛盾、補回核心差異化、加入權限與隱私章節）
 **最後更新：** 2026-06
@@ -111,9 +111,9 @@
 - 譯文可直接複製。
 
 **4.7 逐字字典 / 文法（關鍵：字典 ≠ LLM）**
-- **字典查詢**（音標、詞性、固定例句）→ 接**真字典資料源**（如有道 / Cambridge API，或本地 mdict 詞庫匯入）。快、準、不編造。
-- **文法建議 / 語境解釋 / 改寫** → 才交給 **LLM（Gemini）**，按需觸發。
-- 互動：點選單字 → 跳字典卡片；選整句 → 文法/語境卡片。
+- **字典查詢**（音標、詞性、中文釋義）→ 接**本地 ECDICT 英漢 SQLite**（離線、零外送、不編造），打包進 app；詳見 [decisions.md D7](decisions.md)。快、準、不依賴網路。
+- **字典查無時的 AI 字義** → 才交給 **LLM（Gemini）**，按需觸發單一請求（明確標示「AI 推測」）。
+- 互動：點選單字 → 跳字典卡片（查無才 fallback 到 Gemini）。逐句文法已收斂，見 D7 與 backlog。
 
 **4.8 LLM provider 抽象層**
 - 可切換 provider：**Gemini（預設）**、OpenAI、Claude、Google MT（fallback）。
@@ -177,7 +177,7 @@ Return:
 │  [3] 服務抽象層 (核心設計)                      │
 │   ├─ MT Provider     (Google/DeepL) ← 快翻     │
 │   ├─ LLM Provider    (Gemini 預設)  ← 理解/文法 │
-│   ├─ Dictionary      (mdict/API)    ← 真字典    │
+│   ├─ Dictionary      (本地 ECDICT)  ← 真字典    │
 │   └─ Cache                                     │
 └───────────────┬─────────────────────────────┘
                 ↓

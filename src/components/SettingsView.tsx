@@ -313,7 +313,7 @@ function SettingsForm() {
             )}
           </div>
           <p className="field-hint">
-            字典查詢免 key（公開字典 API）；只有文法 / 語境 / 改寫才用 Gemini。
+            字典查詢免 key（本地 ECDICT，離線、零外送）；只有字典查無時的 AI 字義才用 Gemini。
           </p>
           {geminiMessage && <p className="field-message">{geminiMessage}</p>}
         </div>

@@ -35,6 +35,7 @@ export type WbTranslation =
     }
   | { kind: "secret" }
   | { kind: "empty" }
+  | { kind: "stale" }
   | { kind: "error"; message: string };
 
 export interface DictMeaning {

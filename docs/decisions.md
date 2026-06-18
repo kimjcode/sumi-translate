@@ -81,6 +81,7 @@
 - 來源語言用 provider 內建 auto-detect，不另裝語言偵測庫。
 - 目標語言預設繁中（台灣，`zh-TW`），可在設定改。DeepL 語言碼映射：`zh-TW→ZH-HANT`、`zh-CN→ZH-HANS`、`en→EN-US`。
 - API key 一律存 macOS Keychain（service `com.kimj.sumi`），key 不回傳前端、不進 log、不進檔案。
+- **Google key 走 header `X-Goog-Api-Key`，不放 URL query**（2026-06-18 修，audit H1 / [issues #14](issues.md)）：query string 會被 reqwest 連線錯誤的 Display 帶進 log，違反「key 不進 log」紅線。DeepL/Gemini 本就走 header。另加 `providers::redact_secrets` 在 `Network` 錯誤建構點遮 `key=…`，作為「未來任何 reqwest error 進 log」的縱深防線。
 - MT 是一次回傳整段，**不做假串流**；等待狀態用朱色筆鋒 loading。真串流等 LLM（P1）。
 
 ## D2 — 權限流程：先自己說明，再跳原生框（2026-06-12）

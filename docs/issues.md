@@ -90,3 +90,36 @@
 - **根因**：release 是 **ad-hoc 簽章**（`TeamIdentifier not set`、`flags=adhoc,linker-signed`），TCC 對未正式簽章 app 綁 binary 的 **cdhash**；每次重打包 cdhash 變，系統設定那條「Sumi」綁到舊 cdhash，對不上現在的 binary。**只切換開關不會重綁**。
 - **修法（B：未簽章現實的緩解，非根治）**：onboarding 加「重新檢查」鈕 + 回到視窗自動重查 + 疑難排解（教使用者**整條移除（−）再重授**，不是切換開關）。根治需 Apple Developer ID 簽章＋公證（cdhash 不再隨打包變動、授權跨打包穩定保留）；**目前刻意暫不做，理由見 [decisions.md D10](decisions.md)**。
 - **狀態**：Mitigated（根治＝正式簽章；暫緩屬決策，見 D10）
+
+## 資安修正第一批（feature/security-fixes · 對應 audit-20260618.md）
+
+### 14. Google MT 的 API key 可能被寫進 log（H1 · 紅線）
+- **症狀**：Google 路徑發生連線層錯誤（逾時／斷網／DNS／TLS）時，reqwest 錯誤 Display 會帶上完整請求 URL；key 放在 query string（`?key=AIza…`）→ 整把金鑰隨 `log::warn!` 進 log。
+- **根因**：Google Translation v2 把 key 放 URL query（`mt.rs:61`），且 `ProviderError::Network` 直接吃 `e.to_string()`，再被 pipeline 的 warn log 輸出。違反紅線「任何 log 不可含 key」。
+- **修法**：(b 為主) key 改放 header `X-Goog-Api-Key`，URL 永不含 key；(a) 新增 `providers::redact_secrets`，在所有 `ProviderError::Network` 建構點把 `key=<value>` 遮成 `key=REDACTED`（mt.rs Google/DeepL、llm.rs send/chunk），根治「未來任何 reqwest error 進 log」。
+- **狀態**：Fixed（手動驗證：拔網路翻一次，log 不含 key）
+
+### 15. 字典 fallback 繞過機密過濾、且送整個原文框（H2 · 紅線）
+- **症狀**：在 Workbench 貼含密碼/token 的設定/log，點任一生字 → 後端不過濾就把該字 + **整個原文框**送 Gemini。
+- **根因**：`gemini_define` 入口沒有 `filter::classify`（重翻路徑有、字典路徑漏了）；前端 `sentence = ta.value` 送整段。
+- **修法**：`gemini_define` 進入點先 `filter::classify(&sentence)`，命中 `Secret` → 回「已略過可能的機密內容」、不送出；前端改送「該字所在句」（`sentenceAtCaret`，以句界＋換行切，讓機密那行被獨立後過濾才命中）。
+- **狀態**：Fixed（手動驗證：含密碼樣式點字不送、顯示已略過；正常文字只送該句）
+
+### 16. event tap 被系統停用後無聲失效（M1）
+- **症狀**：callback 太慢或使用者操作讓系統停用 tap 後，雙擊 ⌘C 靜默死掉直到重啟 App。
+- **根因**：`TapDisabledByTimeout | TapDisabledByUserInput` 只 `log::warn!`，未 re-enable。`with_enabled` 不把 tap 交給 callback，拿不到 mach port 重啟。
+- **修法**：改手動建 tap（`new_unchecked`）保留 `CFMachPort`；收到 disabled 事件就 `CGEventTapEnable(port, true)` 就地重啟（自綁公開 C 函式，不新增 crate）。
+- **狀態**：Fixed（這兩種 disable 重啟可靠；未另做 tray 通知，若日後 re-enable 仍失效再補降級提示）
+- **註（曾誤判）**：「輸入 Gemini/MT key 密碼後 Workbench 視窗跳掉」一度被懷疑是此 re-enable 造成，後查證**未簽章正式版（無本批改動）同樣會跳**，且「跳 ⟺ 密碼框出現、key 快取後不跳」→ 是 Keychain 密碼框（ad-hoc 簽章 binary）的既有焦點行為，與 M1 無關，同 #13／D10 成因。
+
+### 17. workbench_translate 無請求序號 → 連續編輯可能顯示舊譯文（M2）
+- **症狀**：原文 debounce 後每次獨立 await，網路慢時較早送出、較晚回的請求會用過時譯文蓋掉新的。
+- **根因**：`run_mt` 無序號/取消（對照 Glance 的 `request_seq`）。
+- **修法**：`WorkbenchState` 加 `mt_seq: AtomicU64`；`workbench_translate` 領序號、await 回來非最新就回新增的 `WbTranslation::Stale`，前端忽略不回填。
+- **狀態**：Fixed
+
+### 18. Gemini 串流無 idle timeout → 串到一半 stall 會無限等（M3）
+- **症狀**：首 token 後連線 stall，AI 字義永遠停在「串流中」，不 done 不 error。
+- **根因**：`llm_client` 只設 `connect_timeout`，刻意不設整體 timeout（對），但也沒有任何 read/idle timeout。
+- **修法**：`llm_client` 加 `read_timeout(20s)`（reqwest 0.13 內建，每次讀重置）；保留整體不限時，stall 逾時轉 `Network` 錯誤。
+- **狀態**：Fixed
