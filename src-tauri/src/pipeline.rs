@@ -297,3 +297,160 @@ fn read_clipboard_text() -> Option<String> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 造一個可辨識的 Routed（用 text 當標記，方便斷言取回的是哪一筆）。
+    fn routed(marker: &str) -> Routed {
+        Routed {
+            text: marker.into(),
+            detected_source: None,
+            target_lang: "zh-TW".into(),
+        }
+    }
+
+    // ---- cache_get / cache_put（LRU + 容量邊界）----
+
+    #[test]
+    fn cache_put_then_get_returns_value() {
+        let state = PipelineState::new();
+        state.cache_put(1, routed("a"));
+        assert_eq!(state.cache_get(1).map(|r| r.text), Some("a".into()));
+    }
+
+    #[test]
+    fn cache_get_missing_key_is_none() {
+        let state = PipelineState::new();
+        state.cache_put(1, routed("a"));
+        assert!(state.cache_get(99).is_none());
+    }
+
+    #[test]
+    fn cache_put_same_key_overwrites_not_duplicates() {
+        let state = PipelineState::new();
+        state.cache_put(1, routed("old"));
+        state.cache_put(1, routed("new"));
+        assert_eq!(state.cache_get(1).map(|r| r.text), Some("new".into()));
+        // retain 去重後只剩一筆，不應在容量計算上重複佔位。
+        assert_eq!(state.cache.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn cache_holds_exactly_cap_without_eviction() {
+        let state = PipelineState::new();
+        // 放滿 CACHE_CAP 筆，邊界內不應淘汰任何一筆。
+        for i in 0..CACHE_CAP as u64 {
+            state.cache_put(i, routed(&format!("v{i}")));
+        }
+        assert_eq!(state.cache.lock().unwrap().len(), CACHE_CAP);
+        for i in 0..CACHE_CAP as u64 {
+            assert!(state.cache_get(i).is_some(), "key {i} should still be cached");
+        }
+    }
+
+    #[test]
+    fn cache_evicts_oldest_when_over_cap() {
+        let state = PipelineState::new();
+        // 放 CACHE_CAP + 1 筆：最早放入的 key 0 應被淘汰，其餘保留。
+        for i in 0..=CACHE_CAP as u64 {
+            state.cache_put(i, routed(&format!("v{i}")));
+        }
+        assert_eq!(state.cache.lock().unwrap().len(), CACHE_CAP);
+        assert!(state.cache_get(0).is_none(), "oldest key 0 should be evicted");
+        assert!(state.cache_get(CACHE_CAP as u64).is_some(), "newest key should survive");
+    }
+
+    #[test]
+    fn cache_get_marks_recently_used_and_protects_from_eviction() {
+        let state = PipelineState::new();
+        for i in 0..CACHE_CAP as u64 {
+            state.cache_put(i, routed(&format!("v{i}")));
+        }
+        // 觸碰 key 0 → 移到最近使用端，使其不再是下次淘汰對象。
+        assert!(state.cache_get(0).is_some());
+        // 再放一筆使容量溢出：此時應淘汰「現在最舊」的 key 1，而非剛觸碰的 key 0。
+        state.cache_put(CACHE_CAP as u64, routed("overflow"));
+        assert!(state.cache_get(0).is_some(), "touched key 0 must survive eviction");
+        assert!(state.cache_get(1).is_none(), "key 1 is now oldest and should be evicted");
+    }
+
+    // ---- cache_key（碰撞 / 區辨）----
+
+    #[test]
+    fn cache_key_is_deterministic() {
+        let a = cache_key(Provider::Google, "fixed:zh-TW", "hello");
+        let b = cache_key(Provider::Google, "fixed:zh-TW", "hello");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn cache_key_differs_by_provider() {
+        let g = cache_key(Provider::Google, "fixed:zh-TW", "hello");
+        let d = cache_key(Provider::Deepl, "fixed:zh-TW", "hello");
+        assert_ne!(g, d, "不同 provider 同文字不應撞鍵");
+    }
+
+    #[test]
+    fn cache_key_differs_by_routing_signature() {
+        let a = cache_key(Provider::Google, "fixed:zh-TW", "hello");
+        let b = cache_key(Provider::Google, "fixed:en", "hello");
+        assert_ne!(a, b, "不同路由方向同文字不應撞鍵");
+    }
+
+    #[test]
+    fn cache_key_differs_by_text() {
+        let a = cache_key(Provider::Google, "fixed:zh-TW", "hello");
+        let b = cache_key(Provider::Google, "fixed:zh-TW", "world");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn cache_key_no_collision_from_field_boundary_shift() {
+        // 易撞點：把分隔挪到相鄰欄位。sig+text 串接若無界線，
+        // ("ab","c") 與 ("a","bc") 會撞。Hash 對各欄位分別 hash 應能區辨。
+        let a = cache_key(Provider::Google, "ab", "c");
+        let b = cache_key(Provider::Google, "a", "bc");
+        assert_ne!(a, b, "欄位邊界位移不應產生碰撞");
+    }
+
+    // ---- routing_signature ----
+
+    #[test]
+    fn routing_signature_fixed_uses_target_lang() {
+        let mut s = Settings::default();
+        s.lang_mode = router::LangMode::Fixed;
+        s.target_lang = "ja".into();
+        assert_eq!(routing_signature(&s), "fixed:ja");
+    }
+
+    #[test]
+    fn routing_signature_pairing_uses_both_langs() {
+        let mut s = Settings::default();
+        s.lang_mode = router::LangMode::Pairing;
+        s.my_lang = "zh-TW".into();
+        s.counterpart_lang = "en".into();
+        assert_eq!(routing_signature(&s), "pair:zh-TW>en");
+    }
+
+    #[test]
+    fn routing_signature_distinguishes_mode_and_direction() {
+        let mut fixed = Settings::default();
+        fixed.lang_mode = router::LangMode::Fixed;
+        fixed.target_lang = "en".into();
+
+        let mut pairing = Settings::default();
+        pairing.lang_mode = router::LangMode::Pairing;
+        pairing.my_lang = "en".into();
+        pairing.counterpart_lang = "zh-TW".into();
+
+        // 不同模式、以及配對方向反轉，簽章都應不同（餵進 cache_key 才不會互相污染）。
+        assert_ne!(routing_signature(&fixed), routing_signature(&pairing));
+
+        let mut reversed = pairing.clone();
+        reversed.my_lang = "zh-TW".into();
+        reversed.counterpart_lang = "en".into();
+        assert_ne!(routing_signature(&pairing), routing_signature(&reversed));
+    }
+}

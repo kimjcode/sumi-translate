@@ -123,3 +123,21 @@
 - **根因**：`llm_client` 只設 `connect_timeout`，刻意不設整體 timeout（對），但也沒有任何 read/idle timeout。
 - **修法**：`llm_client` 加 `read_timeout(20s)`（reqwest 0.13 內建，每次讀重置）；保留整體不限時，stall 逾時轉 `Network` 錯誤。
 - **狀態**：Fixed
+
+## 已知取捨與排查線索（非缺陷 · 對應 audit L2/L3）
+
+> 這節記「已知、目前可接受、不打算改」的點，避免日後被當新 bug 重查。
+> 與上方缺陷分開：這裡沒有「要修」的動作，只留線索。
+
+### L2. 過濾層「寧可錯殺」的已知誤判樣本（符合 D3，不改程式）
+- **位置**：`monitor/filter.rs:107-130`（`is_long_hex` / `is_password_like`）。
+- **現象**：以下正常內容會被判為 `Secret` 而**靜默不翻**（浮窗顯示「已略過可能的機密內容」）：
+  - 純 40 碼 SHA-1（如 git commit hash）→ 命中 `is_long_hex`（≥32 碼 hex）。
+  - 含連字號的 UUID（如 `550e8400-e29b-41d4-a716-446655440000`）→ 同時含數字＋符號＋字母，命中 `is_password_like` 通用密碼樣式。
+- **取捨**：這是 [D3](decisions.md)「機密寧可錯殺、其餘寧可放行」的**刻意取捨**，不是 bug。誤殺的代價是「該段不翻」，遠小於漏放真機密。
+- **狀態**：Accepted（不改）。若日後有人回報「commit hash／UUID 不翻」，先對照本筆，別當新 bug 重查根因。
+
+### L3. `change_count()` 在 event-tap 背景執行緒讀 NSPasteboard（低風險）
+- **位置**：`monitor/pasteboard.rs:18-20`（讀 `changeCount`）＋ `monitor/mod.rs:128`（在 event-tap callback 執行緒呼叫）。
+- **現象**：`changeCount()` 於 CGEventTap 的背景執行緒讀取 `NSPasteboard.generalPasteboard`。NSPasteboard **並非保證 thread-safe**；clipboard manager 慣例上會背景輪詢 `changeCount`，故目前評估低風險、可接受，未改。
+- **狀態**：Accepted（不改）。**排查線索**：若日後出現詭異的 `changeCount` 行為（D8 的「有/無新複製」分流誤判、讀到舊值、偶發 crash），把「背景執行緒讀 NSPasteboard」列為第一個懷疑點，考慮改到主執行緒讀或加同步。
