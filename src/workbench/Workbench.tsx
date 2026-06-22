@@ -219,30 +219,77 @@ export default function Workbench() {
         return;
       }
 
-      // 未命中。命中字典：本地、不打 Gemini。查無：發單一 AI 字義請求。
-      const miss = !entry;
-      cache.current.set(key, {
-        dictEntry: entry,
-        dictMiss: miss,
-        fallbackText: "",
-        fallbackError: null,
-        done: !miss, // 命中字典即完成；查無待 AI 字義結束
-      });
-      setCard({
-        word,
-        anchor,
-        dictEntry: entry,
-        dictLoading: false,
-        dictMiss: miss,
-        fallbackText: "",
-        fallbackStreaming: miss,
-        fallbackError: null,
-      });
-      if (miss) {
+      // 命中字典：純本地、不打 Gemini。
+      if (entry) {
+        cache.current.set(key, {
+          dictEntry: entry,
+          dictMiss: false,
+          fallbackText: "",
+          fallbackError: null,
+          done: true,
+        });
+        setCard({
+          word,
+          anchor,
+          dictEntry: entry,
+          dictLoading: false,
+          dictMiss: false,
+          fallbackText: "",
+          fallbackStreaming: false,
+          fallbackError: null,
+        });
+        return;
+      }
+
+      // ECDICT 查無 → Gemini fallback。但 Gemini 是選配：先問後端有沒有設定 key
+      // （llmKeySet 只回布林，key 始終留在 Keychain），沒設就不發那個注定失敗的請求，
+      // 直接顯示友善提示，避免無聲卡在載入中。
+      api.llmKeySet().then((hasKey) => {
+        if (activeKey.current !== key) return; // 已被新點擊取代
+        if (!hasKey) {
+          const message =
+            "此字典未收錄；到「設定 → 深度理解（Gemini）」填入 API key 可啟用 AI 補充字義";
+          cache.current.set(key, {
+            dictEntry: null,
+            dictMiss: true,
+            fallbackText: "",
+            fallbackError: message,
+            done: true,
+          });
+          setCard({
+            word,
+            anchor,
+            dictEntry: null,
+            dictLoading: false,
+            dictMiss: true,
+            fallbackText: "",
+            fallbackStreaming: false,
+            fallbackError: message,
+          });
+          return;
+        }
+        // 有設 key → 照原本流程發單一 AI 字義請求。
+        cache.current.set(key, {
+          dictEntry: null,
+          dictMiss: true,
+          fallbackText: "",
+          fallbackError: null,
+          done: false, // 查無待 AI 字義結束
+        });
+        setCard({
+          word,
+          anchor,
+          dictEntry: null,
+          dictLoading: false,
+          dictMiss: true,
+          fallbackText: "",
+          fallbackStreaming: true,
+          fallbackError: null,
+        });
         api.geminiDefine(word, sentence, targetLang).then((seq) => {
           defSeq.current = seq;
         });
-      }
+      });
     });
   };
 

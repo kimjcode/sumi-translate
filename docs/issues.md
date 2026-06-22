@@ -124,6 +124,12 @@
 - **修法**：`llm_client` 加 `read_timeout(20s)`（reqwest 0.13 內建，每次讀重置）；保留整體不限時，stall 逾時轉 `Network` 錯誤。
 - **狀態**：Fixed
 
+### 19. 沒設 Gemini key 時，字典查無永遠卡在載入中（無聲失敗）
+- **症狀**：沒設定 Gemini key（選配）時，點一個 ECDICT 查無的字 → 字典卡一直轉圈、AI 字義永遠跑不出來。
+- **根因**：查無一律走 Gemini fallback。`gemini_define` 雖在無 key 時同步 emit `def-error`，但前端是在 `geminiDefine().then` 裡才寫入 `defSeq.current`；同步 emit 的 error 早於 seq 更新送達，被 `seq !== defSeq.current` 過濾掉 → spinner 不收。等於對「合理的沒設選配」情境用最糟的失敗方式（同 M3 無聲卡住壞味道）。
+- **修法**：查無要走 fallback 前，前端先呼叫後端 `llm_key_set`（既有 command，只回布林、key 留 Keychain，不違反「key 不回前端」紅線）。沒設 key → 不發 `geminiDefine`、直接在字典卡顯示「此字典未收錄；到『設定 → 深度理解（Gemini）』填入 API key 可啟用 AI 補充字義」並存入 session 快取（done）。有設 key → 照原流程串流，行為不變。命中字典完全不受影響（本地、不問 key）。
+- **狀態**：Fixed（`tsc --noEmit`、`cargo test --lib` 全綠；手動驗證待實機）
+
 ## 已知取捨與排查線索（非缺陷 · 對應 audit L2/L3）
 
 > 這節記「已知、目前可接受、不打算改」的點，避免日後被當新 bug 重查。
