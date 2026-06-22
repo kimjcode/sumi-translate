@@ -65,11 +65,11 @@ Sumi（墨） 就是為了解決這個硬傷而生的。
 
 ### 前置需求
 
-- macOS
-- [Rust](https://rustup.rs/)（stable，經 rustup 安裝）
-- Node.js 18+ 與 npm
-- Xcode Command Line Tools
-- Python 3 + OpenCC（**只用於建置字典**，不是 App 執行期依賴）：`pip3 install opencc`
+- **macOS**
+- **Rust**（stable）：`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`（見 [rustup.rs](https://rustup.rs/)）
+- **Node.js 18+ 與 npm**：用 [Homebrew](https://brew.sh/) `brew install node`，或 [nvm](https://github.com/nvm-sh/nvm) 裝 18 以上版本
+- **Xcode Command Line Tools**：`xcode-select --install`
+- **Python 3 + OpenCC**（**只用於建置字典**，不是 App 執行期依賴）：macOS 內建 Python 3，或 `brew install python`；再 `pip3 install opencc`
 
 ### 編譯與啟動
 
@@ -109,6 +109,8 @@ npm run tauri build
 ### 2. 貼上 API key
 
 設定 → 翻譯引擎 → 貼上 **Google Cloud Translation API key**（或切 DeepL）。深度功能可另貼 **Gemini** key（給字典查無時的 AI 字義用；字典本身免 key）。
+
+> 還沒有 key？申請與**安全限制**步驟見 [docs/setup-google-api.md](docs/setup-google-api.md)。
 
 **key 只存 macOS Keychain，不落地任何檔案。**
 
