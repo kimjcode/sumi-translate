@@ -7,8 +7,7 @@
 
 平常它是隱形的：沒有 Dock 圖示、不進 `⌘Tab`，只在右上角選單列留一枚墨色小印。
 
-<!-- TODO: 放一張 Glance 浮窗的截圖或 GIF（雙擊 ⌘C → 譯文淡入） -->
-<!-- 截圖佔位：Glance demo -->
+![Sumi Glance 演示：雙擊 ⌘C，譯文浮窗淡入](docs/images/Sumi_Glance_demo.gif)
 
 ---
 
@@ -45,8 +44,7 @@ Sumi（墨） 就是為了解決這個硬傷而生的。
 - 日式水墨美學
   墨色字、紙白底、一枚朱印。Loading 的時候不是無聊的藍色轉圈圈，而是一筆朱色的筆鋒揮毫。
 
-<!-- TODO: 放一張 Workbench 的截圖（左原文／右譯文／字典卡） -->
-<!-- 截圖佔位：Workbench demo -->
+![Sumi Workbench 演示：可編輯原文、即時重翻、點字查字典](docs/images/Sumi_Workbench_demo.gif)
 
 ---
 
