@@ -74,6 +74,8 @@ Sumi 就是為了解決這個硬傷而生的。
 ### 編譯與啟動
 
 ```bash
+git clone https://github.com/kimjcode/sumi-translate.git
+cd sumi-translate
 npm install
 npm run build:dict     # ★ 首次必跑！產生 Workbench 英漢字典
 npm run tauri dev      # 開發模式啟動
