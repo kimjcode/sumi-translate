@@ -124,28 +124,17 @@ function Onboarding({
   );
 }
 
-// MT 引擎清單：兩把 key 各自獨立管理，與「啟用哪個引擎」無關。
-const MT_PROVIDERS: { id: Provider; label: string }[] = [
-  { id: "google", label: "Google" },
-  { id: "deepl", label: "DeepL" },
-];
-
 function SettingsForm() {
   const [settings, setSettings] = useState<Settings | null>(null);
+  // 兩個引擎的 key 狀態都先載入（refreshKeyStatus），這樣切到任一引擎都能正確顯示
+  // 該引擎的「已設定 / 未設定」與「清除」鈕——這正是要修掉的 bug。
   const [keyStatus, setKeyStatus] = useState<Record<Provider, boolean>>({
     google: false,
     deepl: false,
   });
-  // 兩把 MT key 各自一份 draft / 訊息（彼此獨立，不論啟用哪個引擎）。
-  const [keyDrafts, setKeyDrafts] = useState<Record<Provider, string>>({
-    google: "",
-    deepl: "",
-  });
-  const [keyMessages, setKeyMessages] = useState<Record<Provider, string>>({
-    google: "",
-    deepl: "",
-  });
-  const [formMessage, setFormMessage] = useState("");
+  // 單一 key 欄位：永遠只顯示「當前啟用引擎」那一把。
+  const [keyDraft, setKeyDraft] = useState("");
+  const [keyMessage, setKeyMessage] = useState("");
   const [pendingDeepl, setPendingDeepl] = useState(false);
   const [geminiSet, setGeminiSet] = useState(false);
   const [geminiDraft, setGeminiDraft] = useState("");
@@ -174,32 +163,39 @@ function SettingsForm() {
     try {
       await api.setSettings(next);
     } catch (e) {
-      setFormMessage(String(e));
+      setKeyMessage(String(e));
     }
   };
 
   const activeProvider = settings.provider;
 
-  // 任一引擎的 key 都能獨立存（不需先切到該引擎）。
-  const saveKey = async (provider: Provider) => {
+  // 切換引擎時重置 draft / 訊息，避免把為某引擎輸入的 key 帶到另一個引擎。
+  const switchProvider = (provider: Provider) => {
+    setKeyDraft("");
+    setKeyMessage("");
+    apply({ provider });
+  };
+
+  // 對「當前啟用引擎」存 key。
+  const saveKey = async () => {
     try {
-      await api.setApiKey(provider, keyDrafts[provider]);
-      setKeyDrafts((d) => ({ ...d, [provider]: "" }));
-      setKeyMessages((m) => ({ ...m, [provider]: "已存入 macOS Keychain" }));
+      await api.setApiKey(activeProvider, keyDraft);
+      setKeyDraft("");
+      setKeyMessage("已存入 macOS Keychain");
       refreshKeyStatus();
     } catch (e) {
-      setKeyMessages((m) => ({ ...m, [provider]: String(e) }));
+      setKeyMessage(String(e));
     }
   };
 
-  // 任一引擎的 key 都能獨立清（刪 DeepL 不需先切到 DeepL）。
-  const clearKey = async (provider: Provider) => {
+  // 對「當前啟用引擎」清 key（要刪某把就切到那個引擎，那時它的「清除」鈕就會出現）。
+  const clearKey = async () => {
     try {
-      await api.clearApiKey(provider);
-      setKeyMessages((m) => ({ ...m, [provider]: "已從 Keychain 移除" }));
+      await api.clearApiKey(activeProvider);
+      setKeyMessage("已從 Keychain 移除");
       refreshKeyStatus();
     } catch (e) {
-      setKeyMessages((m) => ({ ...m, [provider]: String(e) }));
+      setKeyMessage(String(e));
     }
   };
 
@@ -232,7 +228,7 @@ function SettingsForm() {
               checked={activeProvider === "google" && !pendingDeepl}
               onChange={() => {
                 setPendingDeepl(false);
-                apply({ provider: "google" });
+                switchProvider("google");
               }}
             />
             Google（預設）
@@ -260,7 +256,7 @@ function SettingsForm() {
                 className="primary"
                 onClick={() => {
                   setPendingDeepl(false);
-                  apply({ provider: "deepl" });
+                  switchProvider("deepl");
                 }}
               >
                 了解，切換到 DeepL
@@ -272,46 +268,37 @@ function SettingsForm() {
           </div>
         )}
 
-        {/* 兩把 key 各自獨立：不論啟用哪個引擎，都能設定 / 清除任一把。 */}
-        {MT_PROVIDERS.map(({ id, label }) => (
-          <div className="field" key={id}>
-            <label htmlFor={`api-key-${id}`}>
-              {label} API key
-              {id === activeProvider && <span className="key-active">使用中</span>}
-              <span className={`key-status ${keyStatus[id] ? "ok" : ""}`}>
-                {keyStatus[id] ? "已設定" : "未設定"}
-              </span>
-            </label>
-            <div className="key-row">
-              <input
-                id={`api-key-${id}`}
-                type="password"
-                value={keyDrafts[id]}
-                placeholder="貼上 API key（只存入 macOS Keychain）"
-                onChange={(e) =>
-                  setKeyDrafts((d) => ({ ...d, [id]: e.target.value }))
-                }
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && keyDrafts[id].trim()) saveKey(id);
-                }}
-              />
-              <button
-                className="primary"
-                disabled={!keyDrafts[id].trim()}
-                onClick={() => saveKey(id)}
-              >
-                儲存
+        {/* 單一 key 欄位，跟著當前啟用引擎走。狀態 / 儲存 / 清除全用 activeProvider，
+            切到 DeepL 時若 DeepL 已有 key，就會顯示「已設定」+「清除」。 */}
+        <div className="field">
+          <label htmlFor="api-key">
+            {activeProvider === "google" ? "Google" : "DeepL"} API key
+            <span className={`key-status ${keyStatus[activeProvider] ? "ok" : ""}`}>
+              {keyStatus[activeProvider] ? "已設定" : "未設定"}
+            </span>
+          </label>
+          <div className="key-row">
+            <input
+              id="api-key"
+              type="password"
+              value={keyDraft}
+              placeholder="貼上 API key（只存入 macOS Keychain）"
+              onChange={(e) => setKeyDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && keyDraft.trim()) saveKey();
+              }}
+            />
+            <button className="primary" disabled={!keyDraft.trim()} onClick={saveKey}>
+              儲存
+            </button>
+            {keyStatus[activeProvider] && (
+              <button className="secondary" onClick={clearKey}>
+                清除
               </button>
-              {keyStatus[id] && (
-                <button className="secondary" onClick={() => clearKey(id)}>
-                  清除
-                </button>
-              )}
-            </div>
-            {keyMessages[id] && <p className="field-message">{keyMessages[id]}</p>}
+            )}
           </div>
-        ))}
-        {formMessage && <p className="field-message">{formMessage}</p>}
+          {keyMessage && <p className="field-message">{keyMessage}</p>}
+        </div>
       </section>
 
       <section>
