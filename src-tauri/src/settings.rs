@@ -28,7 +28,6 @@ pub struct Settings {
     pub counterpart_lang: String,
     pub double_press_ms: u64,
     pub idle_close_ms: u64,
-    pub always_on_monitor: bool,
     // 非機密的「key 是否已設定」旗標。存這個是為了讓前端的存在性檢查不必讀 Keychain
     // （未簽章的 dev binary 每次讀 Keychain 都會跳密碼框）。實際 key 仍只在 Keychain。
     pub google_key_set: bool,
@@ -48,7 +47,6 @@ impl Default for Settings {
             counterpart_lang: "en".into(),
             double_press_ms: crate::monitor::double_press::DOUBLE_PRESS_WINDOW_MS,
             idle_close_ms: 6000,
-            always_on_monitor: false,
             google_key_set: false,
             deepl_key_set: false,
             gemini_key_set: false,

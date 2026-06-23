@@ -435,15 +435,6 @@ function SettingsForm() {
         </div>
       </section>
 
-      <section>
-        <h2>進階</h2>
-        <div className="field toggle-row">
-          <label htmlFor="always-on">always-on 剪貼簿監聽（複製即翻）</label>
-          <input id="always-on" type="checkbox" checked={false} disabled />
-          <span className="field-hint">即將推出，預設關閉。</span>
-        </div>
-      </section>
-
       <footer className="settings-footer">
         在任何 App 反白文字後快速按兩次 ⌘C，譯文會出現在游標附近。
       </footer>

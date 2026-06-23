@@ -13,7 +13,6 @@ export interface Settings {
   counterpart_lang: string;
   double_press_ms: number;
   idle_close_ms: number;
-  always_on_monitor: boolean;
   google_key_set: boolean;
   deepl_key_set: boolean;
   gemini_key_set: boolean;
