@@ -130,6 +130,21 @@
 - **修法**：查無要走 fallback 前，前端先呼叫後端 `llm_key_set`（既有 command，只回布林、key 留 Keychain，不違反「key 不回前端」紅線）。沒設 key → 不發 `geminiDefine`、直接在字典卡顯示「此字典未收錄；到『設定 → 深度理解（Gemini）』填入 API key 可啟用 AI 補充字義」並存入 session 快取（done）。有設 key → 照原流程串流，行為不變。命中字典完全不受影響（本地、不問 key）。
 - **狀態**：Fixed（`tsc --noEmit`、`cargo test --lib` 全綠；手動驗證待實機）
 
+## 友善化與 key 管理（feature/key-error-and-delete）
+
+### 20. key 設錯時露出原始 API 錯誤（開發者訊息給了使用者）
+- **症狀**：MT / Gemini key 打成無效值翻譯 → 浮窗顯示 `Google 回了錯誤（HTTP 400）：API key not valid. Please pass a valid API key.`，使用者看不懂、不知怎麼辦。
+- **根因**：`ProviderError::user_message_named` 的 `Api` catch-all 直接把服務端 `message` + HTTP code 串進訊息；且無效 key 在 Google/Gemini 回的是 **HTTP 400**（非 401/403），不落在既有的認證 arm，掉進 catch-all 露原文。
+- **修法**：依錯誤類型轉友善繁中、不露原始字串/HTTP code——新增 `is_auth_error()`（401/403，或 400+「api key not valid」訊息）→「{name} API key 無效 — 請到設定檢查或重新貼上」；429/503 →「服務暫時忙碌」；連線類 →「連不上 {name} — 請檢查網路後再試一次」；其他未知 → 通用「暫時無法使用」。Gemini 路徑改傳 name=`Gemini`（卡片已標「AI 字義 · Gemini」）。友善訊息完全不帶 `message`，故不可能夾帶 key。
+- **狀態**：Fixed（`cargo test --lib` 新增 6 個案例全綠；驗證友善訊息不含 HTTP code / 原始英文 / key）
+- **取捨註**：原 #7 曾刻意把 404 body（可用 model 列表）浮上 UI 供診斷；本次依需求改為「不露原始訊息」，診斷資訊只留 `log::warn`（dev log，內容為服務端錯誤、非 key）。
+
+### 21. 非啟用引擎的 MT key 找不到刪除入口
+- **症狀**：平常用 Google、之前試 DeepL 留了 key 的人，找不到刪 DeepL key 的入口（清除鈕只在「當前啟用引擎有 key」時出現、且只清當前引擎）。
+- **根因**：純 UI 問題——key 欄位綁 `activeProvider`，單一 draft/狀態/清除鈕。後端 `set_api_key`/`clear_api_key`/`api_key_set` 本就 per-provider、功能正常。
+- **修法**：設定頁改成「上方選引擎、下方兩個引擎各一個 key 區塊」，各有 draft/狀態/儲存/清除，彼此獨立；不論啟用哪個都能設定/清除任一把。啟用中的引擎標「使用中」。key 仍只存 Keychain，UI 只顯示「已設定/未設定」，不回傳 key 值。
+- **狀態**：Fixed（`tsc --noEmit` 綠；手動驗證待實機）
+
 ## 已知取捨與排查線索（非缺陷 · 對應 audit L2/L3）
 
 > 這節記「已知、目前可接受、不打算改」的點，避免日後被當新 bug 重查。

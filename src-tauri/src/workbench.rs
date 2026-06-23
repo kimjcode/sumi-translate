@@ -340,7 +340,9 @@ pub fn gemini_define(app: AppHandle, word: String, sentence: String, target_lang
                     DEF_ERROR_EVENT,
                     LlmEvent::Error {
                         seq,
-                        message: e.user_message_named("AI 字義"),
+                        // 字典卡已標示「AI 字義 · Gemini」；訊息用 Gemini 名稱，
+                        // 認證類才會讀成「Gemini API key 無效 — 請到設定檢查或重新貼上」。
+                        message: e.user_message_named("Gemini"),
                     },
                 );
             }

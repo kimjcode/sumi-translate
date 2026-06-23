@@ -46,33 +46,55 @@ impl ProviderError {
     }
 
     /// 同上，但服務名稱自帶（給 Gemini / Dictionary 等非 MT 服務用）。
+    ///
+    /// 友善化原則（缺口 B）：依**錯誤類型**轉成繁中訊息，講清楚「哪裡錯 + 怎麼辦」，
+    /// 但**絕不露原始 API 錯誤字串、HTTP code、技術細節**。原始錯誤可能夾帶 URL / key，
+    /// 一律不外漏到 UI（紅線）。
     pub fn user_message_named(&self, name: &str) -> String {
         match self {
             ProviderError::MissingKey => {
                 format!("尚未設定 {name} API key — 到 Sumi 設定視窗貼上即可")
             }
+            // 連線類（斷網 / 逾時 / DNS）：原始字串可能含 URL，不外露。
             ProviderError::Network(_) => {
-                format!("連不上 {name} — 檢查網路後再雙擊一次")
-            }
-            ProviderError::Api { status: 401 | 403, .. } => {
-                format!("{name} 拒絕了這把 API key — 到設定確認 key 是否有效")
-            }
-            ProviderError::Api { status: 429, .. } => {
-                format!("{name} 額度暫時用完 — 稍等再試")
+                format!("連不上 {name} — 請檢查網路後再試一次")
             }
             ProviderError::Api { status, message } => {
-                if message.is_empty() {
-                    format!("{name} 回了錯誤（HTTP {status}）— 稍後再試")
+                if is_auth_error(*status, message) {
+                    // 認證類（401/403，或 Google/Gemini 對無效 key 回的 400）→ 有明確解法：去設定。
+                    format!("{name} API key 無效 — 請到設定檢查或重新貼上")
+                } else if matches!(status, 429 | 503) {
+                    // 忙碌類（額度 / 過載）。
+                    format!("{name} 服務暫時忙碌 — 請稍後再試")
                 } else {
-                    // 帶上服務端訊息（如 404 會列出可用 model），方便診斷。
-                    format!("{name} 回了錯誤（HTTP {status}）：{message}")
+                    // 其他未知：通用友善訊息，不露原始英文與 HTTP code。
+                    format!("{name} 暫時無法使用 — 請稍後再試，持續發生請回報")
                 }
             }
             ProviderError::Parse(_) => {
-                format!("看不懂 {name} 的回應 — 稍後再試，持續發生請回報")
+                format!("看不懂 {name} 的回應 — 請稍後再試，持續發生請回報")
             }
         }
     }
+}
+
+/// 是否為「API key 無效 / 認證失敗」類錯誤。
+///
+/// 涵蓋 401/403，以及 Google Translation v2 與 Gemini 對**無效 key** 回的 HTTP 400
+/// （body 帶 `API key not valid. Please pass a valid API key.`）。判斷只看狀態碼與
+/// 錯誤型別字串，**不含、也不回傳 key**。
+fn is_auth_error(status: u16, message: &str) -> bool {
+    if matches!(status, 401 | 403) {
+        return true;
+    }
+    if status == 400 {
+        let m = message.to_ascii_lowercase();
+        return m.contains("api key not valid")
+            || m.contains("api_key_invalid")
+            || m.contains("invalid api key")
+            || m.contains("api key is invalid");
+    }
+    false
 }
 
 /// MT provider 統一 trait。新 provider 實作此 trait 後加進 `translate` 的分派即可。
@@ -184,5 +206,74 @@ mod tests {
         assert_eq!(redact_secrets(s), s);
         // 「key=」後面沒有值（空字串）不亂插 REDACTED。
         assert_eq!(redact_secrets("key="), "key=");
+    }
+
+    // ── 友善錯誤訊息（缺口 B）──────────────────────────────────────────────
+
+    fn api(status: u16, message: &str) -> ProviderError {
+        ProviderError::Api { status, message: message.into() }
+    }
+
+    #[test]
+    fn invalid_key_400_maps_to_auth_message_not_raw() {
+        // Google / Gemini 對無效 key 回 HTTP 400 + 「API key not valid」。
+        let raw = "API key not valid. Please pass a valid API key.";
+        let msg = api(400, raw).user_message_named("Google");
+        assert!(msg.contains("API key 無效"), "should be friendly auth msg: {msg}");
+        // 不可露原始英文與 HTTP code。
+        assert!(!msg.contains("HTTP"));
+        assert!(!msg.contains("400"));
+        assert!(!msg.contains("not valid"));
+    }
+
+    #[test]
+    fn auth_errors_401_403_map_to_auth_message() {
+        for status in [401u16, 403] {
+            let msg = api(status, "Authorization failed").user_message_named("DeepL");
+            assert!(msg.contains("API key 無效"), "status {status}: {msg}");
+            assert!(!msg.contains("Authorization"));
+        }
+    }
+
+    #[test]
+    fn busy_429_503_map_to_busy_message() {
+        for status in [429u16, 503] {
+            let msg = api(status, "Service Unavailable").user_message_named("Google");
+            assert!(msg.contains("忙碌"), "status {status}: {msg}");
+            assert!(!msg.contains("503") && !msg.contains("Unavailable"));
+        }
+    }
+
+    #[test]
+    fn unknown_api_error_hides_raw_message_and_code() {
+        // 非認證、非忙碌的 400（例如 Invalid Value）→ 通用友善訊息，不露原文/HTTP code。
+        let msg = api(400, "Invalid Value").user_message_named("Google");
+        assert!(!msg.contains("400") && !msg.contains("Invalid Value"), "{msg}");
+        assert!(msg.contains("暫時無法使用"));
+
+        let msg404 = api(404, "models/foo is not found").user_message_named("Gemini");
+        assert!(!msg404.contains("404") && !msg404.contains("not found"), "{msg404}");
+    }
+
+    #[test]
+    fn network_and_missing_key_never_leak_raw() {
+        // Network 原始字串可能含 redact 後的 URL，但友善訊息根本不帶它。
+        let net = ProviderError::Network("error sending request for url (https://… key=REDACTED)".into())
+            .user_message_named("Gemini");
+        assert!(!net.contains("http") && !net.contains("url"), "{net}");
+        assert!(net.contains("檢查網路"));
+
+        let miss = ProviderError::MissingKey.user_message_named("Google");
+        assert!(miss.contains("尚未設定"));
+    }
+
+    #[test]
+    fn is_auth_error_classifies_status_and_message() {
+        assert!(is_auth_error(401, ""));
+        assert!(is_auth_error(403, ""));
+        assert!(is_auth_error(400, "API key not valid. Please pass a valid API key."));
+        // 400 但非 key 問題 → 不算認證。
+        assert!(!is_auth_error(400, "Invalid Value"));
+        assert!(!is_auth_error(429, "rate limit"));
     }
 }

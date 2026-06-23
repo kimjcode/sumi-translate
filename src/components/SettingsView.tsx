@@ -124,14 +124,28 @@ function Onboarding({
   );
 }
 
+// MT 引擎清單：兩把 key 各自獨立管理，與「啟用哪個引擎」無關。
+const MT_PROVIDERS: { id: Provider; label: string }[] = [
+  { id: "google", label: "Google" },
+  { id: "deepl", label: "DeepL" },
+];
+
 function SettingsForm() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [keyStatus, setKeyStatus] = useState<Record<Provider, boolean>>({
     google: false,
     deepl: false,
   });
-  const [keyDraft, setKeyDraft] = useState("");
-  const [keyMessage, setKeyMessage] = useState("");
+  // 兩把 MT key 各自一份 draft / 訊息（彼此獨立，不論啟用哪個引擎）。
+  const [keyDrafts, setKeyDrafts] = useState<Record<Provider, string>>({
+    google: "",
+    deepl: "",
+  });
+  const [keyMessages, setKeyMessages] = useState<Record<Provider, string>>({
+    google: "",
+    deepl: "",
+  });
+  const [formMessage, setFormMessage] = useState("");
   const [pendingDeepl, setPendingDeepl] = useState(false);
   const [geminiSet, setGeminiSet] = useState(false);
   const [geminiDraft, setGeminiDraft] = useState("");
@@ -160,27 +174,33 @@ function SettingsForm() {
     try {
       await api.setSettings(next);
     } catch (e) {
-      setKeyMessage(String(e));
+      setFormMessage(String(e));
     }
   };
 
   const activeProvider = settings.provider;
 
-  const saveKey = async () => {
+  // 任一引擎的 key 都能獨立存（不需先切到該引擎）。
+  const saveKey = async (provider: Provider) => {
     try {
-      await api.setApiKey(activeProvider, keyDraft);
-      setKeyDraft("");
-      setKeyMessage("已存入 macOS Keychain");
+      await api.setApiKey(provider, keyDrafts[provider]);
+      setKeyDrafts((d) => ({ ...d, [provider]: "" }));
+      setKeyMessages((m) => ({ ...m, [provider]: "已存入 macOS Keychain" }));
       refreshKeyStatus();
     } catch (e) {
-      setKeyMessage(String(e));
+      setKeyMessages((m) => ({ ...m, [provider]: String(e) }));
     }
   };
 
-  const clearKey = async () => {
-    await api.clearApiKey(activeProvider);
-    setKeyMessage("已從 Keychain 移除");
-    refreshKeyStatus();
+  // 任一引擎的 key 都能獨立清（刪 DeepL 不需先切到 DeepL）。
+  const clearKey = async (provider: Provider) => {
+    try {
+      await api.clearApiKey(provider);
+      setKeyMessages((m) => ({ ...m, [provider]: "已從 Keychain 移除" }));
+      refreshKeyStatus();
+    } catch (e) {
+      setKeyMessages((m) => ({ ...m, [provider]: String(e) }));
+    }
   };
 
   const saveGeminiKey = async () => {
@@ -252,35 +272,46 @@ function SettingsForm() {
           </div>
         )}
 
-        <div className="field">
-          <label htmlFor="api-key">
-            {activeProvider === "google" ? "Google" : "DeepL"} API key
-            <span className={`key-status ${keyStatus[activeProvider] ? "ok" : ""}`}>
-              {keyStatus[activeProvider] ? "已設定" : "未設定"}
-            </span>
-          </label>
-          <div className="key-row">
-            <input
-              id="api-key"
-              type="password"
-              value={keyDraft}
-              placeholder="貼上 API key（只存入 macOS Keychain）"
-              onChange={(e) => setKeyDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && keyDraft.trim()) saveKey();
-              }}
-            />
-            <button className="primary" disabled={!keyDraft.trim()} onClick={saveKey}>
-              儲存
-            </button>
-            {keyStatus[activeProvider] && (
-              <button className="secondary" onClick={clearKey}>
-                清除
+        {/* 兩把 key 各自獨立：不論啟用哪個引擎，都能設定 / 清除任一把。 */}
+        {MT_PROVIDERS.map(({ id, label }) => (
+          <div className="field" key={id}>
+            <label htmlFor={`api-key-${id}`}>
+              {label} API key
+              {id === activeProvider && <span className="key-active">使用中</span>}
+              <span className={`key-status ${keyStatus[id] ? "ok" : ""}`}>
+                {keyStatus[id] ? "已設定" : "未設定"}
+              </span>
+            </label>
+            <div className="key-row">
+              <input
+                id={`api-key-${id}`}
+                type="password"
+                value={keyDrafts[id]}
+                placeholder="貼上 API key（只存入 macOS Keychain）"
+                onChange={(e) =>
+                  setKeyDrafts((d) => ({ ...d, [id]: e.target.value }))
+                }
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && keyDrafts[id].trim()) saveKey(id);
+                }}
+              />
+              <button
+                className="primary"
+                disabled={!keyDrafts[id].trim()}
+                onClick={() => saveKey(id)}
+              >
+                儲存
               </button>
-            )}
+              {keyStatus[id] && (
+                <button className="secondary" onClick={() => clearKey(id)}>
+                  清除
+                </button>
+              )}
+            </div>
+            {keyMessages[id] && <p className="field-message">{keyMessages[id]}</p>}
           </div>
-          {keyMessage && <p className="field-message">{keyMessage}</p>}
-        </div>
+        ))}
+        {formMessage && <p className="field-message">{formMessage}</p>}
       </section>
 
       <section>

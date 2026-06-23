@@ -156,6 +156,13 @@
   border-color: var(--accent);
 }
 
+/* 標示目前翻譯所用的引擎（兩把 key 並列時，點出哪一把是使用中）。 */
+.key-active {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .key-row {
   display: flex;
   gap: 8px;
